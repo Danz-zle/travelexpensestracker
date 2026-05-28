@@ -12,6 +12,8 @@ SHEETS_WEBHOOK_URL = os.environ.get("SHEETS_WEBHOOK_URL")
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
+LAST_PENDING_ITEM = {}
+
 SUPPORTED_CURRENCIES = {
     "JPY": ["jpy", "yen", "¥"],
     "USD": ["usd", "$"],
@@ -66,6 +68,19 @@ def parse_message(text):
     return item_name, price, currency
 
 
+def is_twprice_command(text):
+    return text.lower().startswith("twprice")
+
+
+def parse_twprice(text):
+    numbers = re.findall(r"\d+", text)
+
+    if not numbers:
+        return None
+
+    return int(numbers[-1])
+
+
 def send_message(chat_id, text):
     url = BASE_URL + "/sendMessage"
 
@@ -77,6 +92,52 @@ def send_message(chat_id, text):
     requests.post(url, data=data)
 
 
+def find_taiwan_price_from_sheet(item_name):
+    data = {
+        "action": "find_price",
+        "item": item_name
+    }
+
+    try:
+        response = requests.post(
+            SHEETS_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        result = response.json()
+
+        if result.get("found"):
+            return int(result.get("taiwan_price"))
+
+        return None
+
+    except Exception as e:
+        print("Find Taiwan price error:", e)
+        return None
+
+
+def save_taiwan_price_to_sheet(item_name, taiwan_price):
+    data = {
+        "action": "save_price",
+        "item": item_name.lower().strip(),
+        "taiwan_price": taiwan_price
+    }
+
+    try:
+        response = requests.post(
+            SHEETS_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
+        return response.json()
+
+    except Exception as e:
+        print("Save Taiwan price error:", e)
+        return None
+
+
 def log_to_google_sheets(result, raw_message):
 
     if not SHEETS_WEBHOOK_URL:
@@ -86,6 +147,7 @@ def log_to_google_sheets(result, raw_message):
         return
 
     data = {
+        "action": "log",
         "item": result["item"],
         "currency": result["currency"],
         "original_price": result["original_price"],
@@ -178,6 +240,41 @@ def telegram_webhook():
 
     text = message.get("text", "")
 
+    if is_twprice_command(text):
+
+        taiwan_price = parse_twprice(text)
+
+        pending_item = LAST_PENDING_ITEM.get(chat_id)
+
+        if taiwan_price is None:
+            send_message(
+                chat_id,
+                "Please use:\nTWPRICE 1490"
+            )
+            return jsonify({"ok": True})
+
+        if not pending_item:
+            send_message(
+                chat_id,
+                "No pending item found. Please search an item first."
+            )
+            return jsonify({"ok": True})
+
+        save_taiwan_price_to_sheet(
+            pending_item,
+            taiwan_price
+        )
+
+        send_message(
+            chat_id,
+            f"✅ Taiwan price saved.\n\n"
+            f"📦 Item: {pending_item}\n"
+            f"🇹🇼 Taiwan Price: NT${taiwan_price}\n\n"
+            f"Now send the item again to evaluate it."
+        )
+
+        return jsonify({"ok": True})
+
     item_name, price, currency = parse_message(text)
 
     if item_name is None:
@@ -191,10 +288,28 @@ def telegram_webhook():
 
         return jsonify({"ok": True})
 
+    taiwan_price = find_taiwan_price_from_sheet(item_name)
+
+    if taiwan_price is None:
+
+        LAST_PENDING_ITEM[chat_id] = item_name
+
+        send_message(
+            chat_id,
+            f"❌ Taiwan price not found.\n\n"
+            f"📦 Item: {item_name}\n\n"
+            f"Reply with:\n"
+            f"TWPRICE 1490\n\n"
+            f"to save the Taiwan reference price."
+        )
+
+        return jsonify({"ok": True})
+
     result = evaluate_purchase(
         item_name,
         price,
-        currency
+        currency,
+        taiwan_price
     )
 
     log_to_google_sheets(result, text)
