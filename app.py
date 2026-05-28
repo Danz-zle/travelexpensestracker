@@ -7,8 +7,8 @@ from evaluator import evaluate_purchase
 
 app = Flask(__name__)
 
-8595214572:AAGISa2l6rdna8smrZoKohm6g1-GJKgmsuQ = os.environ.get("TELEGRAM_BOT_TOKEN")
-https://script.google.com/macros/s/AKfycbzN6CBxUab2Kp6HV4hxKIbQAnSiEOm9vt9YD2ZF8KiX-e2F9ai9WwyUwA5OH2loB4rO/exec = os.environ.get("SHEETS_WEBHOOK_URL")
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+SHEETS_WEBHOOK_URL = os.environ.get("SHEETS_WEBHOOK_URL")
 
 BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
