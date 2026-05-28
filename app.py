@@ -81,6 +81,34 @@ def parse_twprice(text):
     return int(numbers[-1])
 
 
+def is_addprice_command(text):
+    return text.lower().startswith("addprice")
+
+
+def parse_addprice(text):
+
+    cleaned = re.sub(
+        r"(?i)addprice",
+        "",
+        text
+    ).strip()
+
+    numbers = re.findall(r"\d+", cleaned)
+
+    if not numbers:
+        return None, None
+
+    taiwan_price = int(numbers[-1])
+
+    item_name = re.sub(
+        r"\d+",
+        "",
+        cleaned
+    ).strip()
+
+    return item_name, taiwan_price
+
+
 def send_message(chat_id, text):
     url = BASE_URL + "/sendMessage"
 
@@ -240,6 +268,34 @@ def telegram_webhook():
 
     text = message.get("text", "")
 
+    if is_addprice_command(text):
+
+        item_name, taiwan_price = parse_addprice(text)
+
+        if not item_name or not taiwan_price:
+
+            send_message(
+                chat_id,
+                "Example:\n"
+                "ADDPRICE Sony XM6 10990"
+            )
+
+            return jsonify({"ok": True})
+
+        save_taiwan_price_to_sheet(
+            item_name,
+            taiwan_price
+        )
+
+        send_message(
+            chat_id,
+            f"✅ Taiwan price added.\n\n"
+            f"📦 Item: {item_name}\n"
+            f"🇹🇼 Taiwan Price: NT${taiwan_price}"
+        )
+
+        return jsonify({"ok": True})
+
     if is_twprice_command(text):
 
         taiwan_price = parse_twprice(text)
@@ -283,7 +339,9 @@ def telegram_webhook():
             chat_id,
             "Example:\n"
             "Uniqlo Jacket 5999 JPY\n"
-            "Nike Shoes USD 120"
+            "Nike Shoes USD 120\n\n"
+            "Or preload Taiwan price:\n"
+            "ADDPRICE Sony XM6 10990"
         )
 
         return jsonify({"ok": True})
@@ -300,7 +358,8 @@ def telegram_webhook():
             f"📦 Item: {item_name}\n\n"
             f"Reply with:\n"
             f"TWPRICE 1490\n\n"
-            f"to save the Taiwan reference price."
+            f"or preload directly:\n"
+            f"ADDPRICE {item_name} 1490"
         )
 
         return jsonify({"ok": True})
