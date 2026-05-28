@@ -78,6 +78,7 @@ def send_message(chat_id, text):
 
 
 def log_to_google_sheets(result, raw_message):
+
     if not SHEETS_WEBHOOK_URL:
         return
 
@@ -96,22 +97,65 @@ def log_to_google_sheets(result, raw_message):
     }
 
     try:
-        requests.post(SHEETS_WEBHOOK_URL, json=data, timeout=10)
+        requests.post(
+            SHEETS_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
     except Exception as e:
         print("Google Sheets log error:", e)
 
 
 def format_result(result):
+
     if "error" in result:
         return f"❌ {result['error']}"
 
+    converted = result["converted_twd"]
+    taiwan_price = result["taiwan_price"]
+
+    difference_amount = converted - taiwan_price
+    abs_difference = abs(difference_amount)
+
+    decision = result["decision"]
+
+    if decision == "BUY":
+
+        title = "✅ BUY"
+
+        summary = (
+            f"You save about NT${abs_difference} vs Taiwan."
+        )
+
+    elif decision == "NORMAL":
+
+        title = "🟡 NORMAL"
+
+        summary = (
+            "Price is close to Taiwan. "
+            "Buy only if you really want it."
+        )
+
+    else:
+
+        title = "❌ DON'T BUY"
+
+        summary = (
+            f"This is about NT${abs_difference} "
+            f"more expensive than Taiwan."
+        )
+
     return (
+        f"{title}\n\n"
         f"📦 Item: {result['item']}\n"
-        f"💰 Original: {result['currency']} {result['original_price']}\n"
-        f"💱 Converted: NT${result['converted_twd']}\n"
-        f"🇹🇼 Taiwan Price: NT${result['taiwan_price']}\n"
-        f"📊 Difference: {result['difference_percent']}%\n"
-        f"🧠 Decision: {result['decision']}"
+        f"💰 Original: {result['currency']} "
+        f"{result['original_price']}\n"
+        f"💱 Converted: NT${converted}\n"
+        f"🇹🇼 Taiwan Price: NT${taiwan_price}\n"
+        f"📊 Difference: "
+        f"{result['difference_percent']}%\n\n"
+        f"{summary}"
     )
 
 
@@ -122,6 +166,7 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
+
     update = request.get_json()
 
     message = update.get("message")
@@ -130,25 +175,40 @@ def telegram_webhook():
         return jsonify({"ok": True})
 
     chat_id = message["chat"]["id"]
+
     text = message.get("text", "")
 
     item_name, price, currency = parse_message(text)
 
     if item_name is None:
+
         send_message(
             chat_id,
-            "Example:\nUniqlo Jacket 5999 JPY\nNike Shoes USD 120"
+            "Example:\n"
+            "Uniqlo Jacket 5999 JPY\n"
+            "Nike Shoes USD 120"
         )
+
         return jsonify({"ok": True})
 
-    result = evaluate_purchase(item_name, price, currency)
+    result = evaluate_purchase(
+        item_name,
+        price,
+        currency
+    )
 
     log_to_google_sheets(result, text)
 
-    send_message(chat_id, format_result(result))
+    send_message(
+        chat_id,
+        format_result(result)
+    )
 
     return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(
+        host="0.0.0.0",
+        port=10000
+    )
