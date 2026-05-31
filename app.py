@@ -15,12 +15,12 @@ BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 LAST_PENDING_ITEM = {}
 
 SUPPORTED_CURRENCIES = {
-    "JPY": ["jpy", "yen", "¥"],
-    "USD": ["usd", "$"],
-    "EUR": ["eur", "€"],
-    "KRW": ["krw", "won"],
-    "HKD": ["hkd"],
-    "SGD": ["sgd"]
+    "JPY": ["jpy", "yen", "¥", "円", "日幣"],
+    "USD": ["usd", "$", "usd$", "us$", "美金"],
+    "EUR": ["eur", "€", "euro"],
+    "KRW": ["krw", "won", "₩", "韓元"],
+    "HKD": ["hkd", "hk$", "港幣"],
+    "SGD": ["sgd", "s$", "新幣"]
 }
 
 
@@ -29,38 +29,59 @@ def detect_currency(text):
 
     for currency_code, keywords in SUPPORTED_CURRENCIES.items():
         for keyword in keywords:
-            if keyword in lower_text:
+            if keyword.lower() in lower_text:
                 return currency_code
 
     return "JPY"
 
 
-def extract_price(text):
-    numbers = re.findall(r"\d+", text)
-
-    if not numbers:
-        return None
-
-    return int(numbers[-1])
-
-
-def clean_item_name(text):
+def remove_currency_words(text):
     cleaned = text
 
     for keywords in SUPPORTED_CURRENCIES.values():
         for keyword in keywords:
-            cleaned = cleaned.replace(keyword, "")
-            cleaned = cleaned.replace(keyword.upper(), "")
+            if keyword in ["¥", "$", "€", "₩"]:
+                cleaned = cleaned.replace(keyword, "")
+            else:
+                cleaned = re.sub(
+                    r"\b" + re.escape(keyword) + r"\b",
+                    "",
+                    cleaned,
+                    flags=re.IGNORECASE
+                )
 
-    cleaned = re.sub(r"\d+", "", cleaned)
+    return cleaned
 
-    return cleaned.strip()
+
+def extract_last_number(text):
+    matches = list(re.finditer(r"\d+", text))
+
+    if not matches:
+        return None, text
+
+    last_match = matches[-1]
+    price = int(last_match.group())
+
+    cleaned_text = (
+        text[:last_match.start()] +
+        text[last_match.end():]
+    )
+
+    return price, cleaned_text
+
+
+def normalize_spaces(text):
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def parse_message(text):
     currency = detect_currency(text)
-    price = extract_price(text)
-    item_name = clean_item_name(text)
+
+    cleaned = remove_currency_words(text)
+
+    price, item_text = extract_last_number(cleaned)
+
+    item_name = normalize_spaces(item_text)
 
     if price is None or item_name == "":
         return None, None, None
@@ -85,28 +106,48 @@ def is_addprice_command(text):
     return text.lower().startswith("addprice")
 
 
-def parse_addprice(text):
+def parse_addprice_line(line):
+    line = line.strip()
 
+    if not line:
+        return None, None
+
+    line = line.replace(",", " ")
+
+    price, item_text = extract_last_number(line)
+
+    item_name = normalize_spaces(item_text)
+
+    if price is None or item_name == "":
+        return None, None
+
+    return item_name, price
+
+
+def parse_addprice(text):
     cleaned = re.sub(
-        r"(?i)addprice",
+        r"(?i)^addprice",
         "",
         text
     ).strip()
 
-    numbers = re.findall(r"\d+", cleaned)
+    if not cleaned:
+        return []
 
-    if not numbers:
-        return None, None
+    lines = cleaned.splitlines()
 
-    taiwan_price = int(numbers[-1])
+    results = []
 
-    item_name = re.sub(
-        r"\d+",
-        "",
-        cleaned
-    ).strip()
+    for line in lines:
+        item_name, taiwan_price = parse_addprice_line(line)
 
-    return item_name, taiwan_price
+        if item_name and taiwan_price:
+            results.append({
+                "item": item_name,
+                "taiwan_price": taiwan_price
+            })
+
+    return results
 
 
 def send_message(chat_id, text):
@@ -270,28 +311,39 @@ def telegram_webhook():
 
     if is_addprice_command(text):
 
-        item_name, taiwan_price = parse_addprice(text)
+        items = parse_addprice(text)
 
-        if not item_name or not taiwan_price:
+        if not items:
 
             send_message(
                 chat_id,
                 "Example:\n"
-                "ADDPRICE Sony XM6 10990"
+                "ADDPRICE Sony XM6 10990\n\n"
+                "Or bulk add:\n"
+                "ADDPRICE\n"
+                "AirPods Pro, 7490\n"
+                "Sony XM6, 10990\n"
+                "Samsung smart watch420, 3500"
             )
 
             return jsonify({"ok": True})
 
-        save_taiwan_price_to_sheet(
-            item_name,
-            taiwan_price
-        )
+        saved_lines = []
+
+        for item in items:
+            save_taiwan_price_to_sheet(
+                item["item"],
+                item["taiwan_price"]
+            )
+
+            saved_lines.append(
+                f"📦 {item['item']} → NT${item['taiwan_price']}"
+            )
 
         send_message(
             chat_id,
-            f"✅ Taiwan price added.\n\n"
-            f"📦 Item: {item_name}\n"
-            f"🇹🇼 Taiwan Price: NT${taiwan_price}"
+            "✅ Taiwan price added.\n\n" +
+            "\n".join(saved_lines)
         )
 
         return jsonify({"ok": True})
