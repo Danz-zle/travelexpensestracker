@@ -20,7 +20,12 @@ SUPPORTED_CURRENCIES = {
     "EUR": ["eur", "€", "euro"],
     "KRW": ["krw", "won", "₩", "韓元"],
     "HKD": ["hkd", "hk$", "港幣"],
-    "SGD": ["sgd", "s$", "新幣"]
+    "SGD": ["sgd", "s$", "新幣"],
+    "MYR": ["myr", "rm", "ringgit", "馬幣"],
+    "THB": ["thb", "baht", "฿", "泰銖"],
+    "VND": ["vnd", "dong", "₫", "越盾"],
+    "PHP": ["php", "peso", "₱", "披索"],
+    "KHR": ["khr", "riel", "៛", "柬幣"]
 }
 
 
