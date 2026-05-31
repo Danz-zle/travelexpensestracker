@@ -1,5 +1,8 @@
 import os
 import re
+import hmac
+import base64
+import hashlib
 import requests
 from flask import Flask, request, jsonify
 
@@ -10,7 +13,10 @@ app = Flask(__name__)
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 SHEETS_WEBHOOK_URL = os.environ.get("SHEETS_WEBHOOK_URL")
 
-BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET")
+LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN")
+
+TELEGRAM_BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 
 LAST_PENDING_ITEM = {}
 
@@ -45,7 +51,7 @@ def remove_currency_words(text):
 
     for keywords in SUPPORTED_CURRENCIES.values():
         for keyword in keywords:
-            if keyword in ["¥", "$", "€", "₩"]:
+            if keyword in ["¥", "$", "€", "₩", "฿", "₫", "₱", "៛"]:
                 cleaned = cleaned.replace(keyword, "")
             else:
                 cleaned = re.sub(
@@ -155,8 +161,8 @@ def parse_addprice(text):
     return results
 
 
-def send_message(chat_id, text):
-    url = BASE_URL + "/sendMessage"
+def send_telegram_message(chat_id, text):
+    url = TELEGRAM_BASE_URL + "/sendMessage"
 
     data = {
         "chat_id": chat_id,
@@ -164,6 +170,27 @@ def send_message(chat_id, text):
     }
 
     requests.post(url, data=data)
+
+
+def send_line_message(reply_token, text):
+    url = "https://api.line.me/v2/bot/message/reply"
+
+    headers = {
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "text",
+                "text": text
+            }
+        ]
+    }
+
+    requests.post(url, headers=headers, json=data)
 
 
 def find_taiwan_price_from_sheet(item_name):
@@ -295,6 +322,118 @@ def format_result(result):
     )
 
 
+def handle_text_message(user_key, text):
+
+    if is_addprice_command(text):
+
+        items = parse_addprice(text)
+
+        if not items:
+            return (
+                "Example:\n"
+                "ADDPRICE Sony XM6 10990\n\n"
+                "Or bulk add:\n"
+                "ADDPRICE\n"
+                "AirPods Pro, 7490\n"
+                "Sony XM6, 10990\n"
+                "Samsung smart watch420, 3500"
+            )
+
+        saved_lines = []
+
+        for item in items:
+            save_taiwan_price_to_sheet(
+                item["item"],
+                item["taiwan_price"]
+            )
+
+            saved_lines.append(
+                f"📦 {item['item']} → NT${item['taiwan_price']}"
+            )
+
+        return (
+            "✅ Taiwan price added.\n\n" +
+            "\n".join(saved_lines)
+        )
+
+    if is_twprice_command(text):
+
+        taiwan_price = parse_twprice(text)
+
+        pending_item = LAST_PENDING_ITEM.get(user_key)
+
+        if taiwan_price is None:
+            return "Please use:\nTWPRICE 1490"
+
+        if not pending_item:
+            return "No pending item found. Please search an item first."
+
+        save_taiwan_price_to_sheet(
+            pending_item,
+            taiwan_price
+        )
+
+        return (
+            f"✅ Taiwan price saved.\n\n"
+            f"📦 Item: {pending_item}\n"
+            f"🇹🇼 Taiwan Price: NT${taiwan_price}\n\n"
+            f"Now send the item again to evaluate it."
+        )
+
+    item_name, price, currency = parse_message(text)
+
+    if item_name is None:
+
+        return (
+            "Example:\n"
+            "Uniqlo Jacket 5999 JPY\n"
+            "Nike Shoes USD 120\n\n"
+            "Or preload Taiwan price:\n"
+            "ADDPRICE Sony XM6 10990"
+        )
+
+    taiwan_price = find_taiwan_price_from_sheet(item_name)
+
+    if taiwan_price is None:
+
+        LAST_PENDING_ITEM[user_key] = item_name
+
+        return (
+            f"❌ Taiwan price not found.\n\n"
+            f"📦 Item: {item_name}\n\n"
+            f"Reply with:\n"
+            f"TWPRICE 1490\n\n"
+            f"or preload directly:\n"
+            f"ADDPRICE {item_name} 1490"
+        )
+
+    result = evaluate_purchase(
+        item_name,
+        price,
+        currency,
+        taiwan_price
+    )
+
+    log_to_google_sheets(result, text)
+
+    return format_result(result)
+
+
+def verify_line_signature(body, signature):
+    if not LINE_CHANNEL_SECRET:
+        return False
+
+    hash_value = hmac.new(
+        LINE_CHANNEL_SECRET.encode("utf-8"),
+        body,
+        hashlib.sha256
+    ).digest()
+
+    expected_signature = base64.b64encode(hash_value).decode("utf-8")
+
+    return hmac.compare_digest(expected_signature, signature)
+
+
 @app.route("/", methods=["GET"])
 def home():
     return "Travel Expense Tracker webhook is running."
@@ -314,126 +453,67 @@ def telegram_webhook():
 
     text = message.get("text", "")
 
-    if is_addprice_command(text):
+    user_key = f"telegram:{chat_id}"
 
-        items = parse_addprice(text)
-
-        if not items:
-
-            send_message(
-                chat_id,
-                "Example:\n"
-                "ADDPRICE Sony XM6 10990\n\n"
-                "Or bulk add:\n"
-                "ADDPRICE\n"
-                "AirPods Pro, 7490\n"
-                "Sony XM6, 10990\n"
-                "Samsung smart watch420, 3500"
-            )
-
-            return jsonify({"ok": True})
-
-        saved_lines = []
-
-        for item in items:
-            save_taiwan_price_to_sheet(
-                item["item"],
-                item["taiwan_price"]
-            )
-
-            saved_lines.append(
-                f"📦 {item['item']} → NT${item['taiwan_price']}"
-            )
-
-        send_message(
-            chat_id,
-            "✅ Taiwan price added.\n\n" +
-            "\n".join(saved_lines)
-        )
-
-        return jsonify({"ok": True})
-
-    if is_twprice_command(text):
-
-        taiwan_price = parse_twprice(text)
-
-        pending_item = LAST_PENDING_ITEM.get(chat_id)
-
-        if taiwan_price is None:
-            send_message(
-                chat_id,
-                "Please use:\nTWPRICE 1490"
-            )
-            return jsonify({"ok": True})
-
-        if not pending_item:
-            send_message(
-                chat_id,
-                "No pending item found. Please search an item first."
-            )
-            return jsonify({"ok": True})
-
-        save_taiwan_price_to_sheet(
-            pending_item,
-            taiwan_price
-        )
-
-        send_message(
-            chat_id,
-            f"✅ Taiwan price saved.\n\n"
-            f"📦 Item: {pending_item}\n"
-            f"🇹🇼 Taiwan Price: NT${taiwan_price}\n\n"
-            f"Now send the item again to evaluate it."
-        )
-
-        return jsonify({"ok": True})
-
-    item_name, price, currency = parse_message(text)
-
-    if item_name is None:
-
-        send_message(
-            chat_id,
-            "Example:\n"
-            "Uniqlo Jacket 5999 JPY\n"
-            "Nike Shoes USD 120\n\n"
-            "Or preload Taiwan price:\n"
-            "ADDPRICE Sony XM6 10990"
-        )
-
-        return jsonify({"ok": True})
-
-    taiwan_price = find_taiwan_price_from_sheet(item_name)
-
-    if taiwan_price is None:
-
-        LAST_PENDING_ITEM[chat_id] = item_name
-
-        send_message(
-            chat_id,
-            f"❌ Taiwan price not found.\n\n"
-            f"📦 Item: {item_name}\n\n"
-            f"Reply with:\n"
-            f"TWPRICE 1490\n\n"
-            f"or preload directly:\n"
-            f"ADDPRICE {item_name} 1490"
-        )
-
-        return jsonify({"ok": True})
-
-    result = evaluate_purchase(
-        item_name,
-        price,
-        currency,
-        taiwan_price
+    reply_text = handle_text_message(
+        user_key,
+        text
     )
 
-    log_to_google_sheets(result, text)
-
-    send_message(
+    send_telegram_message(
         chat_id,
-        format_result(result)
+        reply_text
     )
+
+    return jsonify({"ok": True})
+
+
+@app.route("/line-webhook", methods=["POST"])
+def line_webhook():
+
+    body = request.get_data()
+
+    signature = request.headers.get(
+        "X-Line-Signature",
+        ""
+    )
+
+    if not verify_line_signature(body, signature):
+        return jsonify({"error": "Invalid signature"}), 403
+
+    payload = request.get_json()
+
+    events = payload.get("events", [])
+
+    for event in events:
+
+        if event.get("type") != "message":
+            continue
+
+        message = event.get("message", {})
+
+        if message.get("type") != "text":
+            continue
+
+        source = event.get("source", {})
+
+        user_id = source.get("userId", "unknown")
+
+        user_key = f"line:{user_id}"
+
+        reply_token = event.get("replyToken")
+
+        text = message.get("text", "")
+
+        reply_text = handle_text_message(
+            user_key,
+            text
+        )
+
+        send_line_message(
+            reply_token,
+            reply_text
+        )
 
     return jsonify({"ok": True})
 
