@@ -65,13 +65,24 @@ def remove_currency_words(text):
 
 
 def extract_last_number(text):
-    matches = list(re.finditer(r"\d+", text))
+    matches = list(
+        re.finditer(
+            r"\d+(?:\.\d+)?",
+            text
+        )
+    )
 
     if not matches:
         return None, text
 
     last_match = matches[-1]
-    price = int(last_match.group())
+
+    raw_number = last_match.group()
+
+    if "." in raw_number:
+        price = float(raw_number)
+    else:
+        price = int(raw_number)
 
     cleaned_text = (
         text[:last_match.start()] +
@@ -105,12 +116,20 @@ def is_twprice_command(text):
 
 
 def parse_twprice(text):
-    numbers = re.findall(r"\d+", text)
+    numbers = re.findall(
+        r"\d+(?:\.\d+)?",
+        text
+    )
 
     if not numbers:
         return None
 
-    return int(numbers[-1])
+    value = numbers[-1]
+
+    if "." in value:
+        return float(value)
+
+    return int(value)
 
 
 def is_addprice_command(text):
@@ -209,7 +228,7 @@ def find_taiwan_price_from_sheet(item_name):
         result = response.json()
 
         if result.get("found"):
-            return int(result.get("taiwan_price"))
+            return float(result.get("taiwan_price"))
 
         return None
 
@@ -237,6 +256,13 @@ def save_taiwan_price_to_sheet(item_name, taiwan_price):
     except Exception as e:
         print("Save Taiwan price error:", e)
         return None
+
+
+def format_money(value):
+    if isinstance(value, float) and not value.is_integer():
+        return round(value, 2)
+
+    return int(value)
 
 
 def log_to_google_sheets(result, raw_message):
@@ -288,7 +314,7 @@ def format_result(result):
         title = "✅ BUY"
 
         summary = (
-            f"You save about NT${abs_difference} vs Taiwan."
+            f"You save about NT${format_money(abs_difference)} vs Taiwan."
         )
 
     elif decision == "NORMAL":
@@ -305,7 +331,7 @@ def format_result(result):
         title = "❌ DON'T BUY"
 
         summary = (
-            f"This is about NT${abs_difference} "
+            f"This is about NT${format_money(abs_difference)} "
             f"more expensive than Taiwan."
         )
 
@@ -313,9 +339,9 @@ def format_result(result):
         f"{title}\n\n"
         f"📦 Item: {result['item']}\n"
         f"💰 Original: {result['currency']} "
-        f"{result['original_price']}\n"
-        f"💱 Converted: NT${converted}\n"
-        f"🇹🇼 Taiwan Price: NT${taiwan_price}\n"
+        f"{format_money(result['original_price'])}\n"
+        f"💱 Converted: NT${format_money(converted)}\n"
+        f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n"
         f"📊 Difference: "
         f"{result['difference_percent']}%\n\n"
         f"{summary}"
@@ -348,7 +374,7 @@ def handle_text_message(user_key, text):
             )
 
             saved_lines.append(
-                f"📦 {item['item']} → NT${item['taiwan_price']}"
+                f"📦 {item['item']} → NT${format_money(item['taiwan_price'])}"
             )
 
         return (
@@ -376,7 +402,7 @@ def handle_text_message(user_key, text):
         return (
             f"✅ Taiwan price saved.\n\n"
             f"📦 Item: {pending_item}\n"
-            f"🇹🇼 Taiwan Price: NT${taiwan_price}\n\n"
+            f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n\n"
             f"Now send the item again to evaluate it."
         )
 
