@@ -38,18 +38,15 @@ SUPPORTED_CURRENCIES = {
 
 def detect_currency(text):
     lower_text = text.lower()
-
     for currency_code, keywords in SUPPORTED_CURRENCIES.items():
         for keyword in keywords:
             if keyword.lower() in lower_text:
                 return currency_code
-
     return "JPY"
 
 
 def remove_currency_words(text):
     cleaned = text
-
     for keywords in SUPPORTED_CURRENCIES.values():
         for keyword in keywords:
             if keyword in ["¥", "$", "€", "₩", "฿", "₫", "₱", "៛"]:
@@ -61,34 +58,20 @@ def remove_currency_words(text):
                     cleaned,
                     flags=re.IGNORECASE
                 )
-
     return cleaned
 
 
 def extract_last_number(text):
-    matches = list(
-        re.finditer(
-            r"\d+(?:\.\d+)?",
-            text
-        )
-    )
-
+    matches = list(re.finditer(r"\d+(?:\.\d+)?", text))
     if not matches:
         return None, text
 
     last_match = matches[-1]
     raw_number = last_match.group()
 
-    if "." in raw_number:
-        price = float(raw_number)
-    else:
-        price = int(raw_number)
+    price = float(raw_number) if "." in raw_number else int(raw_number)
 
-    cleaned_text = (
-        text[:last_match.start()] +
-        text[last_match.end():]
-    )
-
+    cleaned_text = text[:last_match.start()] + text[last_match.end():]
     return price, cleaned_text
 
 
@@ -110,6 +93,10 @@ def parse_message(text):
 
 def is_help_command(text):
     return text.lower().strip() in ["help", "/help", "menu", "指令", "幫助"]
+
+
+def is_status_command(text):
+    return text.lower().strip() in ["status", "狀態"]
 
 
 def is_listprice_command(text):
@@ -137,30 +124,20 @@ def is_deleteprice_command(text):
 
 
 def parse_twprice(text):
-    numbers = re.findall(
-        r"\d+(?:\.\d+)?",
-        text
-    )
-
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
     if not numbers:
         return None
 
     value = numbers[-1]
-
-    if "." in value:
-        return float(value)
-
-    return int(value)
+    return float(value) if "." in value else int(value)
 
 
 def parse_rate_command(text):
     parts = text.strip().split()
-
     if len(parts) < 2:
         return None
 
     target = parts[1].upper()
-
     if target not in SUPPORTED_CURRENCIES:
         return None
 
@@ -169,14 +146,11 @@ def parse_rate_command(text):
 
 def parse_price_line(line):
     line = line.strip()
-
     if not line:
         return None, None
 
     line = line.replace(",", " ")
-
     price, item_text = extract_last_number(line)
-
     item_name = normalize_spaces(item_text)
 
     if price is None or item_name == "":
@@ -195,11 +169,9 @@ def parse_items_with_prices(text, command):
     if not cleaned:
         return []
 
-    lines = cleaned.splitlines()
-
     results = []
 
-    for line in lines:
+    for line in cleaned.splitlines():
         item_name, taiwan_price = parse_price_line(line)
 
         if item_name and taiwan_price:
@@ -212,22 +184,15 @@ def parse_items_with_prices(text, command):
 
 
 def parse_delete_items(text):
-    cleaned = re.sub(
-        r"(?i)^deleteprice",
-        "",
-        text
-    ).strip()
+    cleaned = re.sub(r"(?i)^deleteprice", "", text).strip()
 
     if not cleaned:
         return []
 
-    lines = cleaned.splitlines()
-
     results = []
 
-    for line in lines:
+    for line in cleaned.splitlines():
         item_name = normalize_spaces(line.replace(",", " "))
-
         if item_name:
             results.append(item_name)
 
@@ -236,13 +201,7 @@ def parse_delete_items(text):
 
 def send_telegram_message(chat_id, text):
     url = TELEGRAM_BASE_URL + "/sendMessage"
-
-    data = {
-        "chat_id": chat_id,
-        "text": text
-    }
-
-    requests.post(url, data=data)
+    requests.post(url, data={"chat_id": chat_id, "text": text})
 
 
 def send_line_message(reply_token, text):
@@ -255,12 +214,7 @@ def send_line_message(reply_token, text):
 
     data = {
         "replyToken": reply_token,
-        "messages": [
-            {
-                "type": "text",
-                "text": text
-            }
-        ]
+        "messages": [{"type": "text", "text": text}]
     }
 
     requests.post(url, headers=headers, json=data)
@@ -268,14 +222,8 @@ def send_line_message(reply_token, text):
 
 def call_sheets_api(data):
     try:
-        response = requests.post(
-            SHEETS_WEBHOOK_URL,
-            json=data,
-            timeout=10
-        )
-
+        response = requests.post(SHEETS_WEBHOOK_URL, json=data, timeout=10)
         return response.json()
-
     except Exception as e:
         print("Google Sheets API error:", e)
         return None
@@ -330,12 +278,10 @@ def delete_taiwan_price_from_sheet(item_name):
 def format_money(value):
     if isinstance(value, float) and not value.is_integer():
         return round(value, 2)
-
     return int(value)
 
 
 def log_to_google_sheets(result, raw_message):
-
     if not SHEETS_WEBHOOK_URL:
         return
 
@@ -356,7 +302,6 @@ def log_to_google_sheets(result, raw_message):
 
 
 def format_result(result):
-
     if "error" in result:
         return f"❌ {result['error']}"
 
@@ -371,11 +316,9 @@ def format_result(result):
     if decision == "BUY":
         title = "✅ BUY"
         summary = f"You save about NT${format_money(abs_difference)} vs Taiwan."
-
     elif decision == "NORMAL":
         title = "🟡 NORMAL"
         summary = "Price is close to Taiwan. Buy only if you really want it."
-
     else:
         title = "❌ DON'T BUY"
         summary = f"This is about NT${format_money(abs_difference)} more expensive than Taiwan."
@@ -388,6 +331,25 @@ def format_result(result):
         f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n"
         f"📊 Difference: {result['difference_percent']}%\n\n"
         f"{summary}"
+    )
+
+
+def format_missing_price_message(item_name, price, currency, converted_twd):
+    return (
+        f"❌ Taiwan price not found.\n\n"
+        f"📦 Item: {item_name}\n"
+        f"💰 Original: {currency} {format_money(price)}\n"
+        f"💱 Converted: NT${format_money(converted_twd)}\n\n"
+        f"Database has no Taiwan reference price yet, so I cannot judge BUY / DON'T BUY.\n\n"
+        f"Next actions:\n\n"
+        f"➕ Save Taiwan price:\n"
+        f"ADDPRICE {item_name} 999\n\n"
+        f"⚡ Quick save current item:\n"
+        f"TWPRICE 999\n\n"
+        f"💱 Check currency rate:\n"
+        f"RATE {currency}\n\n"
+        f"📖 Help:\n"
+        f"HELP"
     )
 
 
@@ -414,7 +376,33 @@ def handle_help():
         "💱 Currency reference:\n"
         "RATE JPY\n"
         "RATE USD\n"
-        "RATE MYR"
+        "RATE MYR\n\n"
+        "📊 Bot/database status:\n"
+        "STATUS"
+    )
+
+
+def handle_status():
+    items = list_taiwan_prices_from_sheet()
+    item_count = len(items)
+
+    supported = ", ".join(SUPPORTED_CURRENCIES.keys())
+
+    return (
+        "📊 Travel Expense Tracker Status\n\n"
+        f"Database items: {item_count}\n\n"
+        "Platforms:\n"
+        "✅ Telegram\n"
+        "✅ LINE\n\n"
+        "Supported currencies:\n"
+        f"{supported}\n\n"
+        "Main commands:\n"
+        "HELP\n"
+        "LISTPRICE\n"
+        "RATE JPY\n"
+        "ADDPRICE item price\n"
+        "UPDATEPRICE item price\n"
+        "DELETEPRICE item"
     )
 
 
@@ -455,17 +443,8 @@ def handle_rate(text):
             "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR"
         )
 
-    one_twd_to_target = convert_currency(
-        1,
-        "TWD",
-        target_currency
-    )
-
-    thousand_target_to_twd = convert_currency(
-        1000,
-        target_currency,
-        "TWD"
-    )
+    one_twd_to_target = convert_currency(1, "TWD", target_currency)
+    thousand_target_to_twd = convert_currency(1000, target_currency, "TWD")
 
     if one_twd_to_target is None or thousand_target_to_twd is None:
         return "❌ Currency rate lookup failed."
@@ -494,19 +473,12 @@ def handle_addprice(text):
     saved_lines = []
 
     for item in items:
-        save_taiwan_price_to_sheet(
-            item["item"],
-            item["taiwan_price"]
-        )
-
+        save_taiwan_price_to_sheet(item["item"], item["taiwan_price"])
         saved_lines.append(
             f"📦 {item['item']} → NT${format_money(item['taiwan_price'])}"
         )
 
-    return (
-        "✅ Taiwan price added.\n\n" +
-        "\n".join(saved_lines)
-    )
+    return "✅ Taiwan price added.\n\n" + "\n".join(saved_lines)
 
 
 def handle_updateprice(text):
@@ -525,24 +497,15 @@ def handle_updateprice(text):
     updated_lines = []
 
     for item in items:
-        result = update_taiwan_price_in_sheet(
-            item["item"],
-            item["taiwan_price"]
-        )
+        result = update_taiwan_price_in_sheet(item["item"], item["taiwan_price"])
 
-        if result and result.get("updated_existing"):
-            status = "updated"
-        else:
-            status = "added"
+        status = "updated" if result and result.get("updated_existing") else "added"
 
         updated_lines.append(
             f"📦 {item['item']} → NT${format_money(item['taiwan_price'])} ({status})"
         )
 
-    return (
-        "✅ Taiwan price updated.\n\n" +
-        "\n".join(updated_lines)
-    )
+    return "✅ Taiwan price updated.\n\n" + "\n".join(updated_lines)
 
 
 def handle_deleteprice(text):
@@ -562,31 +525,22 @@ def handle_deleteprice(text):
 
     for item_name in items:
         result = delete_taiwan_price_from_sheet(item_name)
-
-        deleted_count = 0
-
-        if result:
-            deleted_count = result.get("deleted_count", 0)
+        deleted_count = result.get("deleted_count", 0) if result else 0
 
         if deleted_count > 0:
-            deleted_lines.append(
-                f"🗑️ {item_name} deleted ({deleted_count})"
-            )
+            deleted_lines.append(f"🗑️ {item_name} deleted ({deleted_count})")
         else:
-            deleted_lines.append(
-                f"⚠️ {item_name} not found"
-            )
+            deleted_lines.append(f"⚠️ {item_name} not found")
 
-    return (
-        "✅ Delete result:\n\n" +
-        "\n".join(deleted_lines)
-    )
+    return "✅ Delete result:\n\n" + "\n".join(deleted_lines)
 
 
 def handle_text_message(user_key, text):
-
     if is_help_command(text):
         return handle_help()
+
+    if is_status_command(text):
+        return handle_status()
 
     if is_listprice_command(text):
         return handle_listprice()
@@ -604,9 +558,7 @@ def handle_text_message(user_key, text):
         return handle_deleteprice(text)
 
     if is_twprice_command(text):
-
         taiwan_price = parse_twprice(text)
-
         pending_item = LAST_PENDING_ITEM.get(user_key)
 
         if taiwan_price is None:
@@ -615,10 +567,7 @@ def handle_text_message(user_key, text):
         if not pending_item:
             return "No pending item found. Please search an item first."
 
-        save_taiwan_price_to_sheet(
-            pending_item,
-            taiwan_price
-        )
+        save_taiwan_price_to_sheet(pending_item, taiwan_price)
 
         return (
             f"✅ Taiwan price saved.\n\n"
@@ -635,24 +584,27 @@ def handle_text_message(user_key, text):
     taiwan_price = find_taiwan_price_from_sheet(item_name)
 
     if taiwan_price is None:
-
         LAST_PENDING_ITEM[user_key] = item_name
 
-        return (
-            f"❌ Taiwan price not found.\n\n"
-            f"📦 Item: {item_name}\n\n"
-            f"Reply with:\n"
-            f"TWPRICE 1490\n\n"
-            f"or preload directly:\n"
-            f"ADDPRICE {item_name} 1490"
+        converted_twd = convert_currency(price, currency, "TWD")
+
+        if converted_twd is None:
+            return (
+                f"❌ Taiwan price not found.\n\n"
+                f"📦 Item: {item_name}\n"
+                f"💰 Original: {currency} {format_money(price)}\n\n"
+                f"Currency conversion failed.\n\n"
+                f"Try:\nRATE {currency}"
+            )
+
+        return format_missing_price_message(
+            item_name,
+            price,
+            currency,
+            converted_twd
         )
 
-    result = evaluate_purchase(
-        item_name,
-        price,
-        currency,
-        taiwan_price
-    )
+    result = evaluate_purchase(item_name, price, currency, taiwan_price)
 
     log_to_google_sheets(result, text)
 
@@ -681,9 +633,7 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
-
     update = request.get_json()
-
     message = update.get("message")
 
     if not message:
@@ -702,23 +652,16 @@ def telegram_webhook():
 
 @app.route("/line-webhook", methods=["POST"])
 def line_webhook():
-
     body = request.get_data()
-
-    signature = request.headers.get(
-        "X-Line-Signature",
-        ""
-    )
+    signature = request.headers.get("X-Line-Signature", "")
 
     if not verify_line_signature(body, signature):
         return jsonify({"error": "Invalid signature"}), 403
 
     payload = request.get_json()
-
     events = payload.get("events", [])
 
     for event in events:
-
         if event.get("type") != "message":
             continue
 
@@ -741,7 +684,4 @@ def line_webhook():
 
 
 if __name__ == "__main__":
-    app.run(
-        host="0.0.0.0",
-        port=10000
-    )
+    app.run(host="0.0.0.0", port=10000)
