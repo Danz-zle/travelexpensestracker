@@ -76,7 +76,6 @@ def extract_last_number(text):
         return None, text
 
     last_match = matches[-1]
-
     raw_number = last_match.group()
 
     if "." in raw_number:
@@ -98,11 +97,8 @@ def normalize_spaces(text):
 
 def parse_message(text):
     currency = detect_currency(text)
-
     cleaned = remove_currency_words(text)
-
     price, item_text = extract_last_number(cleaned)
-
     item_name = normalize_spaces(item_text)
 
     if price is None or item_name == "":
@@ -113,6 +109,18 @@ def parse_message(text):
 
 def is_twprice_command(text):
     return text.lower().startswith("twprice")
+
+
+def is_addprice_command(text):
+    return text.lower().startswith("addprice")
+
+
+def is_updateprice_command(text):
+    return text.lower().startswith("updateprice")
+
+
+def is_deleteprice_command(text):
+    return text.lower().startswith("deleteprice")
 
 
 def parse_twprice(text):
@@ -132,11 +140,7 @@ def parse_twprice(text):
     return int(value)
 
 
-def is_addprice_command(text):
-    return text.lower().startswith("addprice")
-
-
-def parse_addprice_line(line):
+def parse_price_line(line):
     line = line.strip()
 
     if not line:
@@ -154,9 +158,9 @@ def parse_addprice_line(line):
     return item_name, price
 
 
-def parse_addprice(text):
+def parse_items_with_prices(text, command):
     cleaned = re.sub(
-        r"(?i)^addprice",
+        r"(?i)^" + re.escape(command),
         "",
         text
     ).strip()
@@ -169,13 +173,36 @@ def parse_addprice(text):
     results = []
 
     for line in lines:
-        item_name, taiwan_price = parse_addprice_line(line)
+        item_name, taiwan_price = parse_price_line(line)
 
         if item_name and taiwan_price:
             results.append({
                 "item": item_name,
                 "taiwan_price": taiwan_price
             })
+
+    return results
+
+
+def parse_delete_items(text):
+    cleaned = re.sub(
+        r"(?i)^deleteprice",
+        "",
+        text
+    ).strip()
+
+    if not cleaned:
+        return []
+
+    lines = cleaned.splitlines()
+
+    results = []
+
+    for line in lines:
+        item_name = normalize_spaces(line.replace(",", " "))
+
+        if item_name:
+            results.append(item_name)
 
     return results
 
@@ -212,38 +239,7 @@ def send_line_message(reply_token, text):
     requests.post(url, headers=headers, json=data)
 
 
-def find_taiwan_price_from_sheet(item_name):
-    data = {
-        "action": "find_price",
-        "item": item_name
-    }
-
-    try:
-        response = requests.post(
-            SHEETS_WEBHOOK_URL,
-            json=data,
-            timeout=10
-        )
-
-        result = response.json()
-
-        if result.get("found"):
-            return float(result.get("taiwan_price"))
-
-        return None
-
-    except Exception as e:
-        print("Find Taiwan price error:", e)
-        return None
-
-
-def save_taiwan_price_to_sheet(item_name, taiwan_price):
-    data = {
-        "action": "save_price",
-        "item": item_name.lower().strip(),
-        "taiwan_price": taiwan_price
-    }
-
+def call_sheets_api(data):
     try:
         response = requests.post(
             SHEETS_WEBHOOK_URL,
@@ -254,8 +250,43 @@ def save_taiwan_price_to_sheet(item_name, taiwan_price):
         return response.json()
 
     except Exception as e:
-        print("Save Taiwan price error:", e)
+        print("Google Sheets API error:", e)
         return None
+
+
+def find_taiwan_price_from_sheet(item_name):
+    result = call_sheets_api({
+        "action": "find_price",
+        "item": item_name
+    })
+
+    if result and result.get("found"):
+        return float(result.get("taiwan_price"))
+
+    return None
+
+
+def save_taiwan_price_to_sheet(item_name, taiwan_price):
+    return call_sheets_api({
+        "action": "save_price",
+        "item": item_name.lower().strip(),
+        "taiwan_price": taiwan_price
+    })
+
+
+def update_taiwan_price_in_sheet(item_name, taiwan_price):
+    return call_sheets_api({
+        "action": "update_price",
+        "item": item_name.lower().strip(),
+        "taiwan_price": taiwan_price
+    })
+
+
+def delete_taiwan_price_from_sheet(item_name):
+    return call_sheets_api({
+        "action": "delete_price",
+        "item": item_name.lower().strip()
+    })
 
 
 def format_money(value):
@@ -273,7 +304,7 @@ def log_to_google_sheets(result, raw_message):
     if "error" in result:
         return
 
-    data = {
+    call_sheets_api({
         "action": "log",
         "item": result["item"],
         "currency": result["currency"],
@@ -283,17 +314,7 @@ def log_to_google_sheets(result, raw_message):
         "difference_percent": result["difference_percent"],
         "decision": result["decision"],
         "raw_message": raw_message
-    }
-
-    try:
-        requests.post(
-            SHEETS_WEBHOOK_URL,
-            json=data,
-            timeout=10
-        )
-
-    except Exception as e:
-        print("Google Sheets log error:", e)
+    })
 
 
 def format_result(result):
@@ -310,77 +331,144 @@ def format_result(result):
     decision = result["decision"]
 
     if decision == "BUY":
-
         title = "✅ BUY"
-
-        summary = (
-            f"You save about NT${format_money(abs_difference)} vs Taiwan."
-        )
+        summary = f"You save about NT${format_money(abs_difference)} vs Taiwan."
 
     elif decision == "NORMAL":
-
         title = "🟡 NORMAL"
-
-        summary = (
-            "Price is close to Taiwan. "
-            "Buy only if you really want it."
-        )
+        summary = "Price is close to Taiwan. Buy only if you really want it."
 
     else:
-
         title = "❌ DON'T BUY"
-
-        summary = (
-            f"This is about NT${format_money(abs_difference)} "
-            f"more expensive than Taiwan."
-        )
+        summary = f"This is about NT${format_money(abs_difference)} more expensive than Taiwan."
 
     return (
         f"{title}\n\n"
         f"📦 Item: {result['item']}\n"
-        f"💰 Original: {result['currency']} "
-        f"{format_money(result['original_price'])}\n"
+        f"💰 Original: {result['currency']} {format_money(result['original_price'])}\n"
         f"💱 Converted: NT${format_money(converted)}\n"
         f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n"
-        f"📊 Difference: "
-        f"{result['difference_percent']}%\n\n"
+        f"📊 Difference: {result['difference_percent']}%\n\n"
         f"{summary}"
+    )
+
+
+def handle_addprice(text):
+    items = parse_items_with_prices(text, "addprice")
+
+    if not items:
+        return (
+            "Example:\n"
+            "ADDPRICE Sony XM6 10990\n\n"
+            "Or bulk add:\n"
+            "ADDPRICE\n"
+            "AirPods Pro, 7490\n"
+            "Sony XM6, 10990\n"
+            "Samsung smart watch420, 3500"
+        )
+
+    saved_lines = []
+
+    for item in items:
+        save_taiwan_price_to_sheet(
+            item["item"],
+            item["taiwan_price"]
+        )
+
+        saved_lines.append(
+            f"📦 {item['item']} → NT${format_money(item['taiwan_price'])}"
+        )
+
+    return (
+        "✅ Taiwan price added.\n\n" +
+        "\n".join(saved_lines)
+    )
+
+
+def handle_updateprice(text):
+    items = parse_items_with_prices(text, "updateprice")
+
+    if not items:
+        return (
+            "Example:\n"
+            "UPDATEPRICE Sony XM6 9990\n\n"
+            "Or bulk update:\n"
+            "UPDATEPRICE\n"
+            "AirPods Pro, 6990\n"
+            "Sony XM6, 9990"
+        )
+
+    updated_lines = []
+
+    for item in items:
+        result = update_taiwan_price_in_sheet(
+            item["item"],
+            item["taiwan_price"]
+        )
+
+        if result and result.get("updated_existing"):
+            status = "updated"
+        else:
+            status = "added"
+
+        updated_lines.append(
+            f"📦 {item['item']} → NT${format_money(item['taiwan_price'])} ({status})"
+        )
+
+    return (
+        "✅ Taiwan price updated.\n\n" +
+        "\n".join(updated_lines)
+    )
+
+
+def handle_deleteprice(text):
+    items = parse_delete_items(text)
+
+    if not items:
+        return (
+            "Example:\n"
+            "DELETEPRICE Sony XM6\n\n"
+            "Or bulk delete:\n"
+            "DELETEPRICE\n"
+            "AirPods Pro\n"
+            "Sony XM6"
+        )
+
+    deleted_lines = []
+
+    for item_name in items:
+        result = delete_taiwan_price_from_sheet(item_name)
+
+        deleted_count = 0
+
+        if result:
+            deleted_count = result.get("deleted_count", 0)
+
+        if deleted_count > 0:
+            deleted_lines.append(
+                f"🗑️ {item_name} deleted ({deleted_count})"
+            )
+        else:
+            deleted_lines.append(
+                f"⚠️ {item_name} not found"
+            )
+
+    return (
+        "✅ Delete result:\n\n" +
+        "\n".join(deleted_lines)
     )
 
 
 def handle_text_message(user_key, text):
 
     if is_addprice_command(text):
+        return handle_addprice(text)
 
-        items = parse_addprice(text)
+    if is_updateprice_command(text):
+        return handle_updateprice(text)
 
-        if not items:
-            return (
-                "Example:\n"
-                "ADDPRICE Sony XM6 10990\n\n"
-                "Or bulk add:\n"
-                "ADDPRICE\n"
-                "AirPods Pro, 7490\n"
-                "Sony XM6, 10990\n"
-                "Samsung smart watch420, 3500"
-            )
-
-        saved_lines = []
-
-        for item in items:
-            save_taiwan_price_to_sheet(
-                item["item"],
-                item["taiwan_price"]
-            )
-
-            saved_lines.append(
-                f"📦 {item['item']} → NT${format_money(item['taiwan_price'])}"
-            )
-
-        return (
-            "✅ Taiwan price added.\n\n" +
-            "\n".join(saved_lines)
-        )
+    if is_deleteprice_command(text):
+        return handle_deleteprice(text)
 
     if is_twprice_command(text):
 
@@ -409,13 +497,16 @@ def handle_text_message(user_key, text):
     item_name, price, currency = parse_message(text)
 
     if item_name is None:
-
         return (
             "Example:\n"
             "Uniqlo Jacket 5999 JPY\n"
             "Nike Shoes USD 120\n\n"
-            "Or preload Taiwan price:\n"
-            "ADDPRICE Sony XM6 10990"
+            "Preload:\n"
+            "ADDPRICE Sony XM6 10990\n\n"
+            "Update:\n"
+            "UPDATEPRICE Sony XM6 9990\n\n"
+            "Delete:\n"
+            "DELETEPRICE Sony XM6"
         )
 
     taiwan_price = find_taiwan_price_from_sheet(item_name)
@@ -476,20 +567,12 @@ def telegram_webhook():
         return jsonify({"ok": True})
 
     chat_id = message["chat"]["id"]
-
     text = message.get("text", "")
-
     user_key = f"telegram:{chat_id}"
 
-    reply_text = handle_text_message(
-        user_key,
-        text
-    )
+    reply_text = handle_text_message(user_key, text)
 
-    send_telegram_message(
-        chat_id,
-        reply_text
-    )
+    send_telegram_message(chat_id, reply_text)
 
     return jsonify({"ok": True})
 
@@ -522,24 +605,14 @@ def line_webhook():
             continue
 
         source = event.get("source", {})
-
         user_id = source.get("userId", "unknown")
-
         user_key = f"line:{user_id}"
-
         reply_token = event.get("replyToken")
-
         text = message.get("text", "")
 
-        reply_text = handle_text_message(
-            user_key,
-            text
-        )
+        reply_text = handle_text_message(user_key, text)
 
-        send_line_message(
-            reply_token,
-            reply_text
-        )
+        send_line_message(reply_token, reply_text)
 
     return jsonify({"ok": True})
 
