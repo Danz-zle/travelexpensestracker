@@ -7,6 +7,7 @@ import requests
 from flask import Flask, request, jsonify
 
 from evaluator import evaluate_purchase
+from exchange import convert_currency
 
 app = Flask(__name__)
 
@@ -107,6 +108,18 @@ def parse_message(text):
     return item_name, price, currency
 
 
+def is_help_command(text):
+    return text.lower().strip() in ["help", "/help", "menu", "指令", "幫助"]
+
+
+def is_listprice_command(text):
+    return text.lower().strip() in ["listprice", "list", "prices", "清單"]
+
+
+def is_rate_command(text):
+    return text.lower().startswith("rate")
+
+
 def is_twprice_command(text):
     return text.lower().startswith("twprice")
 
@@ -138,6 +151,20 @@ def parse_twprice(text):
         return float(value)
 
     return int(value)
+
+
+def parse_rate_command(text):
+    parts = text.strip().split()
+
+    if len(parts) < 2:
+        return None
+
+    target = parts[1].upper()
+
+    if target not in SUPPORTED_CURRENCIES:
+        return None
+
+    return target
 
 
 def parse_price_line(line):
@@ -266,6 +293,17 @@ def find_taiwan_price_from_sheet(item_name):
     return None
 
 
+def list_taiwan_prices_from_sheet():
+    result = call_sheets_api({
+        "action": "list_prices"
+    })
+
+    if result and result.get("success"):
+        return result.get("items", [])
+
+    return []
+
+
 def save_taiwan_price_to_sheet(item_name, taiwan_price):
     return call_sheets_api({
         "action": "save_price",
@@ -350,6 +388,92 @@ def format_result(result):
         f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n"
         f"📊 Difference: {result['difference_percent']}%\n\n"
         f"{summary}"
+    )
+
+
+def handle_help():
+    return (
+        "📖 Travel Expense Tracker Commands\n\n"
+        "🔍 Check overseas price:\n"
+        "AirPods Pro USD 199\n"
+        "GU 黑皮夾克 Yen 23999\n"
+        "Test item 59.9 MYR\n\n"
+        "➕ Add Taiwan price:\n"
+        "ADDPRICE AirPods Pro 7490\n\n"
+        "➕ Bulk add:\n"
+        "ADDPRICE\n"
+        "AirPods Pro, 7490\n"
+        "Sony XM6, 10990\n"
+        "GU 黑皮夾克, 4500\n\n"
+        "🔄 Update Taiwan price:\n"
+        "UPDATEPRICE AirPods Pro 6990\n\n"
+        "🗑️ Delete Taiwan price:\n"
+        "DELETEPRICE AirPods Pro\n\n"
+        "📋 List all Taiwan prices:\n"
+        "LISTPRICE\n\n"
+        "💱 Currency reference:\n"
+        "RATE JPY\n"
+        "RATE USD\n"
+        "RATE MYR"
+    )
+
+
+def handle_listprice():
+    items = list_taiwan_prices_from_sheet()
+
+    if not items:
+        return "📋 TaiwanPrices is empty."
+
+    lines = []
+
+    for index, item in enumerate(items, start=1):
+        item_name = item.get("item", "")
+        taiwan_price = item.get("taiwan_price", "")
+
+        lines.append(
+            f"{index}. {item_name} → NT${format_money(float(taiwan_price))}"
+        )
+
+    message = "📋 Taiwan Price Database\n\n" + "\n".join(lines)
+
+    if len(message) > 4500:
+        message = message[:4400] + "\n\n...list too long, please check Google Sheet."
+
+    return message
+
+
+def handle_rate(text):
+    target_currency = parse_rate_command(text)
+
+    if not target_currency:
+        return (
+            "Please use:\n"
+            "RATE JPY\n"
+            "RATE USD\n"
+            "RATE MYR\n\n"
+            "Supported:\n"
+            "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR"
+        )
+
+    one_twd_to_target = convert_currency(
+        1,
+        "TWD",
+        target_currency
+    )
+
+    thousand_target_to_twd = convert_currency(
+        1000,
+        target_currency,
+        "TWD"
+    )
+
+    if one_twd_to_target is None or thousand_target_to_twd is None:
+        return "❌ Currency rate lookup failed."
+
+    return (
+        f"💱 Current Rate Reference\n\n"
+        f"NT$1 ≈ {target_currency} {format_money(one_twd_to_target)}\n"
+        f"{target_currency} 1000 ≈ NT${format_money(thousand_target_to_twd)}"
     )
 
 
@@ -461,6 +585,15 @@ def handle_deleteprice(text):
 
 def handle_text_message(user_key, text):
 
+    if is_help_command(text):
+        return handle_help()
+
+    if is_listprice_command(text):
+        return handle_listprice()
+
+    if is_rate_command(text):
+        return handle_rate(text)
+
     if is_addprice_command(text):
         return handle_addprice(text)
 
@@ -497,17 +630,7 @@ def handle_text_message(user_key, text):
     item_name, price, currency = parse_message(text)
 
     if item_name is None:
-        return (
-            "Example:\n"
-            "Uniqlo Jacket 5999 JPY\n"
-            "Nike Shoes USD 120\n\n"
-            "Preload:\n"
-            "ADDPRICE Sony XM6 10990\n\n"
-            "Update:\n"
-            "UPDATEPRICE Sony XM6 9990\n\n"
-            "Delete:\n"
-            "DELETEPRICE Sony XM6"
-        )
+        return handle_help()
 
     taiwan_price = find_taiwan_price_from_sheet(item_name)
 
