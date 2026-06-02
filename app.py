@@ -32,21 +32,25 @@ SUPPORTED_CURRENCIES = {
     "THB": ["thb", "baht", "฿", "泰銖"],
     "VND": ["vnd", "dong", "₫", "越盾"],
     "PHP": ["php", "peso", "₱", "披索"],
-    "KHR": ["khr", "riel", "៛", "柬幣"]
+    "KHR": ["khr", "riel", "៛", "柬幣"],
+    "CNY": ["cny", "rmb", "yuan", "人民幣", "人民币"]
 }
 
 
 def detect_currency(text):
     lower_text = text.lower()
+
     for currency_code, keywords in SUPPORTED_CURRENCIES.items():
         for keyword in keywords:
             if keyword.lower() in lower_text:
                 return currency_code
-    return "JPY"
+
+    return None
 
 
 def remove_currency_words(text):
     cleaned = text
+
     for keywords in SUPPORTED_CURRENCIES.values():
         for keyword in keywords:
             if keyword in ["¥", "$", "€", "₩", "฿", "₫", "₱", "៛"]:
@@ -58,11 +62,13 @@ def remove_currency_words(text):
                     cleaned,
                     flags=re.IGNORECASE
                 )
+
     return cleaned
 
 
 def extract_last_number(text):
     matches = list(re.finditer(r"\d+(?:\.\d+)?", text))
+
     if not matches:
         return None, text
 
@@ -72,6 +78,7 @@ def extract_last_number(text):
     price = float(raw_number) if "." in raw_number else int(raw_number)
 
     cleaned_text = text[:last_match.start()] + text[last_match.end():]
+
     return price, cleaned_text
 
 
@@ -81,12 +88,18 @@ def normalize_spaces(text):
 
 def parse_message(text):
     currency = detect_currency(text)
+
+    if currency is None:
+        return None, None, None
+
     cleaned = remove_currency_words(text)
+
     price, item_text = extract_last_number(cleaned)
+
     item_name = normalize_spaces(item_text)
 
     if price is None or item_name == "":
-        return None, None, None
+        return None, None, currency
 
     return item_name, price, currency
 
@@ -125,19 +138,23 @@ def is_deleteprice_command(text):
 
 def parse_twprice(text):
     numbers = re.findall(r"\d+(?:\.\d+)?", text)
+
     if not numbers:
         return None
 
     value = numbers[-1]
+
     return float(value) if "." in value else int(value)
 
 
 def parse_rate_command(text):
     parts = text.strip().split()
+
     if len(parts) < 2:
         return None
 
     target = parts[1].upper()
+
     if target not in SUPPORTED_CURRENCIES:
         return None
 
@@ -146,11 +163,14 @@ def parse_rate_command(text):
 
 def parse_price_line(line):
     line = line.strip()
+
     if not line:
         return None, None
 
     line = line.replace(",", " ")
+
     price, item_text = extract_last_number(line)
+
     item_name = normalize_spaces(item_text)
 
     if price is None or item_name == "":
@@ -193,6 +213,7 @@ def parse_delete_items(text):
 
     for line in cleaned.splitlines():
         item_name = normalize_spaces(line.replace(",", " "))
+
         if item_name:
             results.append(item_name)
 
@@ -201,7 +222,14 @@ def parse_delete_items(text):
 
 def send_telegram_message(chat_id, text):
     url = TELEGRAM_BASE_URL + "/sendMessage"
-    requests.post(url, data={"chat_id": chat_id, "text": text})
+
+    requests.post(
+        url,
+        data={
+            "chat_id": chat_id,
+            "text": text
+        }
+    )
 
 
 def send_line_message(reply_token, text):
@@ -214,7 +242,12 @@ def send_line_message(reply_token, text):
 
     data = {
         "replyToken": reply_token,
-        "messages": [{"type": "text", "text": text}]
+        "messages": [
+            {
+                "type": "text",
+                "text": text
+            }
+        ]
     }
 
     requests.post(url, headers=headers, json=data)
@@ -222,8 +255,14 @@ def send_line_message(reply_token, text):
 
 def call_sheets_api(data):
     try:
-        response = requests.post(SHEETS_WEBHOOK_URL, json=data, timeout=10)
+        response = requests.post(
+            SHEETS_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
+
         return response.json()
+
     except Exception as e:
         print("Google Sheets API error:", e)
         return None
@@ -278,6 +317,7 @@ def delete_taiwan_price_from_sheet(item_name):
 def format_money(value):
     if isinstance(value, float) and not value.is_integer():
         return round(value, 2)
+
     return int(value)
 
 
@@ -316,9 +356,11 @@ def format_result(result):
     if decision == "BUY":
         title = "✅ BUY"
         summary = f"You save about NT${format_money(abs_difference)} vs Taiwan."
+
     elif decision == "NORMAL":
         title = "🟡 NORMAL"
         summary = "Price is close to Taiwan. Buy only if you really want it."
+
     else:
         title = "❌ DON'T BUY"
         summary = f"This is about NT${format_money(abs_difference)} more expensive than Taiwan."
@@ -331,6 +373,22 @@ def format_result(result):
         f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n"
         f"📊 Difference: {result['difference_percent']}%\n\n"
         f"{summary}"
+    )
+
+
+def format_currency_required_message():
+    return (
+        "❌ Currency not detected.\n\n"
+        "Please include currency in your message.\n\n"
+        "Examples:\n"
+        "AirPods Pro USD 199\n"
+        "GU 黑皮夾克 JPY 23999\n"
+        "Test item MYR 59.9\n"
+        "Xiaomi Power Bank CNY 129\n\n"
+        "Supported currencies:\n"
+        "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY\n\n"
+        "Note:\n"
+        "¥ is treated as JPY. For China, please use CNY / RMB / yuan / 人民幣."
     )
 
 
@@ -358,8 +416,9 @@ def handle_help():
         "📖 Travel Expense Tracker Commands\n\n"
         "🔍 Check overseas price:\n"
         "AirPods Pro USD 199\n"
-        "GU 黑皮夾克 Yen 23999\n"
-        "Test item 59.9 MYR\n\n"
+        "GU 黑皮夾克 JPY 23999\n"
+        "Test item MYR 59.9\n"
+        "Xiaomi Power Bank CNY 129\n\n"
         "➕ Add Taiwan price:\n"
         "ADDPRICE AirPods Pro 7490\n\n"
         "➕ Bulk add:\n"
@@ -376,7 +435,8 @@ def handle_help():
         "💱 Currency reference:\n"
         "RATE JPY\n"
         "RATE USD\n"
-        "RATE MYR\n\n"
+        "RATE MYR\n"
+        "RATE CNY\n\n"
         "📊 Bot/database status:\n"
         "STATUS"
     )
@@ -384,6 +444,7 @@ def handle_help():
 
 def handle_status():
     items = list_taiwan_prices_from_sheet()
+
     item_count = len(items)
 
     supported = ", ".join(SUPPORTED_CURRENCIES.keys())
@@ -400,6 +461,7 @@ def handle_status():
         "HELP\n"
         "LISTPRICE\n"
         "RATE JPY\n"
+        "RATE CNY\n"
         "ADDPRICE item price\n"
         "UPDATEPRICE item price\n"
         "DELETEPRICE item"
@@ -438,13 +500,23 @@ def handle_rate(text):
             "Please use:\n"
             "RATE JPY\n"
             "RATE USD\n"
-            "RATE MYR\n\n"
+            "RATE MYR\n"
+            "RATE CNY\n\n"
             "Supported:\n"
-            "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR"
+            "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY"
         )
 
-    one_twd_to_target = convert_currency(1, "TWD", target_currency)
-    thousand_target_to_twd = convert_currency(1000, target_currency, "TWD")
+    one_twd_to_target = convert_currency(
+        1,
+        "TWD",
+        target_currency
+    )
+
+    thousand_target_to_twd = convert_currency(
+        1000,
+        target_currency,
+        "TWD"
+    )
 
     if one_twd_to_target is None or thousand_target_to_twd is None:
         return "❌ Currency rate lookup failed."
@@ -473,7 +545,11 @@ def handle_addprice(text):
     saved_lines = []
 
     for item in items:
-        save_taiwan_price_to_sheet(item["item"], item["taiwan_price"])
+        save_taiwan_price_to_sheet(
+            item["item"],
+            item["taiwan_price"]
+        )
+
         saved_lines.append(
             f"📦 {item['item']} → NT${format_money(item['taiwan_price'])}"
         )
@@ -497,7 +573,10 @@ def handle_updateprice(text):
     updated_lines = []
 
     for item in items:
-        result = update_taiwan_price_in_sheet(item["item"], item["taiwan_price"])
+        result = update_taiwan_price_in_sheet(
+            item["item"],
+            item["taiwan_price"]
+        )
 
         status = "updated" if result and result.get("updated_existing") else "added"
 
@@ -525,12 +604,17 @@ def handle_deleteprice(text):
 
     for item_name in items:
         result = delete_taiwan_price_from_sheet(item_name)
+
         deleted_count = result.get("deleted_count", 0) if result else 0
 
         if deleted_count > 0:
-            deleted_lines.append(f"🗑️ {item_name} deleted ({deleted_count})")
+            deleted_lines.append(
+                f"🗑️ {item_name} deleted ({deleted_count})"
+            )
         else:
-            deleted_lines.append(f"⚠️ {item_name} not found")
+            deleted_lines.append(
+                f"⚠️ {item_name} not found"
+            )
 
     return "✅ Delete result:\n\n" + "\n".join(deleted_lines)
 
@@ -559,6 +643,7 @@ def handle_text_message(user_key, text):
 
     if is_twprice_command(text):
         taiwan_price = parse_twprice(text)
+
         pending_item = LAST_PENDING_ITEM.get(user_key)
 
         if taiwan_price is None:
@@ -567,7 +652,10 @@ def handle_text_message(user_key, text):
         if not pending_item:
             return "No pending item found. Please search an item first."
 
-        save_taiwan_price_to_sheet(pending_item, taiwan_price)
+        save_taiwan_price_to_sheet(
+            pending_item,
+            taiwan_price
+        )
 
         return (
             f"✅ Taiwan price saved.\n\n"
@@ -578,6 +666,9 @@ def handle_text_message(user_key, text):
 
     item_name, price, currency = parse_message(text)
 
+    if currency is None:
+        return format_currency_required_message()
+
     if item_name is None:
         return handle_help()
 
@@ -586,7 +677,11 @@ def handle_text_message(user_key, text):
     if taiwan_price is None:
         LAST_PENDING_ITEM[user_key] = item_name
 
-        converted_twd = convert_currency(price, currency, "TWD")
+        converted_twd = convert_currency(
+            price,
+            currency,
+            "TWD"
+        )
 
         if converted_twd is None:
             return (
@@ -604,7 +699,12 @@ def handle_text_message(user_key, text):
             converted_twd
         )
 
-    result = evaluate_purchase(item_name, price, currency, taiwan_price)
+    result = evaluate_purchase(
+        item_name,
+        price,
+        currency,
+        taiwan_price
+    )
 
     log_to_google_sheets(result, text)
 
@@ -634,18 +734,27 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     update = request.get_json()
+
     message = update.get("message")
 
     if not message:
         return jsonify({"ok": True})
 
     chat_id = message["chat"]["id"]
+
     text = message.get("text", "")
+
     user_key = f"telegram:{chat_id}"
 
-    reply_text = handle_text_message(user_key, text)
+    reply_text = handle_text_message(
+        user_key,
+        text
+    )
 
-    send_telegram_message(chat_id, reply_text)
+    send_telegram_message(
+        chat_id,
+        reply_text
+    )
 
     return jsonify({"ok": True})
 
@@ -653,12 +762,17 @@ def telegram_webhook():
 @app.route("/line-webhook", methods=["POST"])
 def line_webhook():
     body = request.get_data()
-    signature = request.headers.get("X-Line-Signature", "")
+
+    signature = request.headers.get(
+        "X-Line-Signature",
+        ""
+    )
 
     if not verify_line_signature(body, signature):
         return jsonify({"error": "Invalid signature"}), 403
 
     payload = request.get_json()
+
     events = payload.get("events", [])
 
     for event in events:
@@ -671,17 +785,30 @@ def line_webhook():
             continue
 
         source = event.get("source", {})
+
         user_id = source.get("userId", "unknown")
+
         user_key = f"line:{user_id}"
+
         reply_token = event.get("replyToken")
+
         text = message.get("text", "")
 
-        reply_text = handle_text_message(user_key, text)
+        reply_text = handle_text_message(
+            user_key,
+            text
+        )
 
-        send_line_message(reply_token, reply_text)
+        send_line_message(
+            reply_token,
+            reply_text
+        )
 
     return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
+    app.run(
+        host="0.0.0.0",
+        port=10000
+    )
