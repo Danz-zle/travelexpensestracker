@@ -23,8 +23,8 @@ LAST_PENDING_ITEM = {}
 
 SUPPORTED_CURRENCIES = {
     "JPY": ["jpy", "yen", "¥", "円", "日幣"],
-    "USD": ["usd", "$", "usd$", "us$", "美金"],
-    "EUR": ["eur", "€", "euro"],
+    "USD": ["usd", "usd$", "us$", "$", "美金"],
+    "EUR": ["eur", "euro", "€"],
     "KRW": ["krw", "won", "₩", "韓元"],
     "HKD": ["hkd", "hk$", "港幣"],
     "SGD": ["sgd", "s$", "新幣"],
@@ -33,35 +33,79 @@ SUPPORTED_CURRENCIES = {
     "VND": ["vnd", "dong", "₫", "越盾"],
     "PHP": ["php", "peso", "₱", "披索"],
     "KHR": ["khr", "riel", "៛", "柬幣"],
-    "CNY": ["cny", "rmb", "yuan", "人民幣", "人民币"]
+    "CNY": ["cny", "rmb", "yuan", "renminbi", "人民幣", "人民币", "人民元"]
 }
 
 
-def detect_currency(text):
+def is_word_keyword(keyword):
+    return re.match(r"^[a-zA-Z0-9]+$", keyword) is not None
+
+
+def keyword_exists(text, keyword):
     lower_text = text.lower()
+    lower_keyword = keyword.lower()
+
+    if is_word_keyword(lower_keyword):
+        pattern = r"\b" + re.escape(lower_keyword) + r"\b"
+        return re.search(pattern, lower_text) is not None
+
+    return lower_keyword in lower_text
+
+
+def detect_currency(text):
+    matches = []
 
     for currency_code, keywords in SUPPORTED_CURRENCIES.items():
         for keyword in keywords:
-            if keyword.lower() in lower_text:
-                return currency_code
+            if keyword_exists(text, keyword):
+                matches.append({
+                    "currency": currency_code,
+                    "keyword": keyword,
+                    "length": len(keyword)
+                })
 
-    return None
+    if not matches:
+        return None
+
+    best_match = sorted(
+        matches,
+        key=lambda x: x["length"],
+        reverse=True
+    )[0]
+
+    return best_match["currency"]
 
 
 def remove_currency_words(text):
     cleaned = text
 
+    all_keywords = []
+
     for keywords in SUPPORTED_CURRENCIES.values():
         for keyword in keywords:
-            if keyword in ["¥", "$", "€", "₩", "฿", "₫", "₱", "៛"]:
-                cleaned = cleaned.replace(keyword, "")
-            else:
-                cleaned = re.sub(
-                    r"\b" + re.escape(keyword) + r"\b",
-                    "",
-                    cleaned,
-                    flags=re.IGNORECASE
-                )
+            all_keywords.append(keyword)
+
+    all_keywords = sorted(
+        all_keywords,
+        key=len,
+        reverse=True
+    )
+
+    for keyword in all_keywords:
+        if is_word_keyword(keyword):
+            cleaned = re.sub(
+                r"\b" + re.escape(keyword) + r"\b",
+                "",
+                cleaned,
+                flags=re.IGNORECASE
+            )
+        else:
+            cleaned = re.sub(
+                re.escape(keyword),
+                "",
+                cleaned,
+                flags=re.IGNORECASE
+            )
 
     return cleaned
 
@@ -387,8 +431,9 @@ def format_currency_required_message():
         "Xiaomi Power Bank CNY 129\n\n"
         "Supported currencies:\n"
         "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY\n\n"
-        "Note:\n"
-        "¥ is treated as JPY. For China, please use CNY / RMB / yuan / 人民幣."
+        "Notes:\n"
+        "¥ is treated as JPY.\n"
+        "For China, please use CNY / RMB / yuan / 人民幣."
     )
 
 
