@@ -148,120 +148,34 @@ def parse_message(text):
     return item_name, price, currency
 
 
-def is_help_command(text):
-    return text.lower().strip() in ["help", "/help", "menu", "指令", "幫助"]
-
-
-def is_status_command(text):
-    return text.lower().strip() in ["status", "狀態"]
-
-
-def is_listprice_command(text):
-    return text.lower().strip() in ["listprice", "list", "prices", "清單"]
-
-
-def is_rate_command(text):
-    return text.lower().startswith("rate")
-
-
-def is_twprice_command(text):
-    return text.lower().startswith("twprice")
-
-
-def is_addprice_command(text):
-    return text.lower().startswith("addprice")
-
-
-def is_updateprice_command(text):
-    return text.lower().startswith("updateprice")
-
-
-def is_deleteprice_command(text):
-    return text.lower().startswith("deleteprice")
-
-
-def parse_twprice(text):
-    numbers = re.findall(r"\d+(?:\.\d+)?", text)
-
-    if not numbers:
-        return None
-
-    value = numbers[-1]
-
-    return float(value) if "." in value else int(value)
-
-
-def parse_rate_command(text):
-    parts = text.strip().split()
-
-    if len(parts) < 2:
-        return None
-
-    target = parts[1].upper()
-
-    if target not in SUPPORTED_CURRENCIES:
-        return None
-
-    return target
-
-
-def parse_price_line(line):
-    line = line.strip()
-
-    if not line:
-        return None, None
-
-    line = line.replace(",", " ")
-
-    price, item_text = extract_last_number(line)
-
-    item_name = normalize_spaces(item_text)
-
-    if price is None or item_name == "":
-        return None, None
-
-    return item_name, price
-
-
-def parse_items_with_prices(text, command):
-    cleaned = re.sub(
+def remove_command(text, command):
+    return re.sub(
         r"(?i)^" + re.escape(command),
         "",
         text
     ).strip()
 
-    if not cleaned:
-        return []
 
-    results = []
+def format_money(value):
+    if isinstance(value, float) and not value.is_integer():
+        return round(value, 2)
 
-    for line in cleaned.splitlines():
-        item_name, taiwan_price = parse_price_line(line)
-
-        if item_name and taiwan_price:
-            results.append({
-                "item": item_name,
-                "taiwan_price": taiwan_price
-            })
-
-    return results
+    return int(value)
 
 
-def parse_delete_items(text):
-    cleaned = re.sub(r"(?i)^deleteprice", "", text).strip()
+def call_sheets_api(data):
+    try:
+        response = requests.post(
+            SHEETS_WEBHOOK_URL,
+            json=data,
+            timeout=10
+        )
 
-    if not cleaned:
-        return []
+        return response.json()
 
-    results = []
-
-    for line in cleaned.splitlines():
-        item_name = normalize_spaces(line.replace(",", " "))
-
-        if item_name:
-            results.append(item_name)
-
-    return results
+    except Exception as e:
+        print("Google Sheets API error:", e)
+        return None
 
 
 def send_telegram_message(chat_id, text):
@@ -295,21 +209,6 @@ def send_line_message(reply_token, text):
     }
 
     requests.post(url, headers=headers, json=data)
-
-
-def call_sheets_api(data):
-    try:
-        response = requests.post(
-            SHEETS_WEBHOOK_URL,
-            json=data,
-            timeout=10
-        )
-
-        return response.json()
-
-    except Exception as e:
-        print("Google Sheets API error:", e)
-        return None
 
 
 def find_taiwan_price_from_sheet(item_name):
@@ -358,13 +257,6 @@ def delete_taiwan_price_from_sheet(item_name):
     })
 
 
-def format_money(value):
-    if isinstance(value, float) and not value.is_integer():
-        return round(value, 2)
-
-    return int(value)
-
-
 def log_to_google_sheets(result, raw_message):
     if not SHEETS_WEBHOOK_URL:
         return
@@ -383,6 +275,185 @@ def log_to_google_sheets(result, raw_message):
         "decision": result["decision"],
         "raw_message": raw_message
     })
+
+
+def log_expense(user_key, platform, item, currency, original_price, converted_twd):
+    return call_sheets_api({
+        "action": "log_expense",
+        "user_key": user_key,
+        "platform": platform,
+        "item": item,
+        "currency": currency,
+        "original_price": original_price,
+        "converted_twd": converted_twd
+    })
+
+
+def list_expenses(user_key):
+    result = call_sheets_api({
+        "action": "list_expenses",
+        "user_key": user_key
+    })
+
+    if result and result.get("success"):
+        return result.get("expenses", [])
+
+    return []
+
+
+def set_budget(user_key, budget_twd):
+    return call_sheets_api({
+        "action": "set_budget",
+        "user_key": user_key,
+        "budget_twd": budget_twd
+    })
+
+
+def get_budget(user_key):
+    result = call_sheets_api({
+        "action": "get_budget",
+        "user_key": user_key
+    })
+
+    if result and result.get("found"):
+        return float(result.get("budget_twd"))
+
+    return None
+
+
+def reset_trip(user_key):
+    return call_sheets_api({
+        "action": "reset_trip",
+        "user_key": user_key
+    })
+
+
+def parse_twprice(text):
+    numbers = re.findall(r"\d+(?:\.\d+)?", text)
+
+    if not numbers:
+        return None
+
+    value = numbers[-1]
+
+    return float(value) if "." in value else int(value)
+
+
+def parse_rate_command(text):
+    parts = text.strip().split()
+
+    if len(parts) < 2:
+        return None
+
+    target = parts[1].upper()
+
+    if target not in SUPPORTED_CURRENCIES:
+        return None
+
+    return target
+
+
+def parse_price_line(line):
+    line = line.strip()
+
+    if not line:
+        return None, None
+
+    line = line.replace(",", " ")
+
+    price, item_text = extract_last_number(line)
+
+    item_name = normalize_spaces(item_text)
+
+    if price is None or item_name == "":
+        return None, None
+
+    return item_name, price
+
+
+def parse_items_with_prices(text, command):
+    cleaned = remove_command(text, command)
+
+    if not cleaned:
+        return []
+
+    results = []
+
+    for line in cleaned.splitlines():
+        item_name, taiwan_price = parse_price_line(line)
+
+        if item_name and taiwan_price:
+            results.append({
+                "item": item_name,
+                "taiwan_price": taiwan_price
+            })
+
+    return results
+
+
+def parse_delete_items(text):
+    cleaned = remove_command(text, "deleteprice")
+
+    if not cleaned:
+        return []
+
+    results = []
+
+    for line in cleaned.splitlines():
+        item_name = normalize_spaces(line.replace(",", " "))
+
+        if item_name:
+            results.append(item_name)
+
+    return results
+
+
+def is_help_command(text):
+    return text.lower().strip() in ["help", "/help", "menu", "指令", "幫助"]
+
+
+def is_status_command(text):
+    return text.lower().strip() in ["status", "狀態"]
+
+
+def is_listprice_command(text):
+    return text.lower().strip() in ["listprice", "list", "prices", "清單"]
+
+
+def is_rate_command(text):
+    return text.lower().startswith("rate")
+
+
+def is_twprice_command(text):
+    return text.lower().startswith("twprice")
+
+
+def is_addprice_command(text):
+    return text.lower().startswith("addprice")
+
+
+def is_updateprice_command(text):
+    return text.lower().startswith("updateprice")
+
+
+def is_deleteprice_command(text):
+    return text.lower().startswith("deleteprice")
+
+
+def is_spent_command(text):
+    return text.lower().startswith("spent")
+
+
+def is_expense_command(text):
+    return text.lower().strip() in ["expense", "expenses", "spending", "花費", "支出"]
+
+
+def is_budget_command(text):
+    return text.lower().startswith("budget")
+
+
+def is_resettrip_command(text):
+    return text.lower().strip() in ["resettrip", "reset trip", "重置旅程"]
 
 
 def format_result(result):
@@ -427,7 +498,7 @@ def format_currency_required_message():
         "Examples:\n"
         "AirPods Pro USD 199\n"
         "GU 黑皮夾克 JPY 23999\n"
-        "Test item MYR 59.9\n"
+        "Lunch MYR 59.9\n"
         "Xiaomi Power Bank CNY 129\n\n"
         "Supported currencies:\n"
         "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY\n\n"
@@ -459,57 +530,52 @@ def format_missing_price_message(item_name, price, currency, converted_twd):
 def handle_help():
     return (
         "📖 Travel Expense Tracker Commands\n\n"
-        "🔍 Check overseas price:\n"
+        "🛍️ Check overseas price:\n"
         "AirPods Pro USD 199\n"
-        "GU 黑皮夾克 JPY 23999\n"
-        "Test item MYR 59.9\n"
-        "Xiaomi Power Bank CNY 129\n\n"
+        "GU 黑皮夾克 JPY 23999\n\n"
         "➕ Add Taiwan price:\n"
         "ADDPRICE AirPods Pro 7490\n\n"
-        "➕ Bulk add:\n"
-        "ADDPRICE\n"
-        "AirPods Pro, 7490\n"
-        "Sony XM6, 10990\n"
-        "GU 黑皮夾克, 4500\n\n"
         "🔄 Update Taiwan price:\n"
         "UPDATEPRICE AirPods Pro 6990\n\n"
         "🗑️ Delete Taiwan price:\n"
         "DELETEPRICE AirPods Pro\n\n"
-        "📋 List all Taiwan prices:\n"
+        "📋 List Taiwan prices:\n"
         "LISTPRICE\n\n"
-        "💱 Currency reference:\n"
+        "💱 Currency rate:\n"
         "RATE JPY\n"
-        "RATE USD\n"
-        "RATE MYR\n"
         "RATE CNY\n\n"
-        "📊 Bot/database status:\n"
+        "💸 Record actual spending:\n"
+        "SPENT Lunch MYR 59.9\n"
+        "SPENT Hotel THB 2500\n\n"
+        "💰 Set trip budget:\n"
+        "BUDGET 30000\n\n"
+        "📊 View trip expenses:\n"
+        "EXPENSE\n\n"
+        "♻️ Reset trip expenses:\n"
+        "RESETTRIP\n\n"
+        "📌 Status:\n"
         "STATUS"
     )
 
 
 def handle_status():
     items = list_taiwan_prices_from_sheet()
-
-    item_count = len(items)
-
+    expenses = []
     supported = ", ".join(SUPPORTED_CURRENCIES.keys())
 
     return (
         "📊 Travel Expense Tracker Status\n\n"
-        f"Database items: {item_count}\n\n"
+        f"Database items: {len(items)}\n\n"
         "Platforms:\n"
         "✅ Telegram\n"
         "✅ LINE\n\n"
         "Supported currencies:\n"
         f"{supported}\n\n"
-        "Main commands:\n"
-        "HELP\n"
-        "LISTPRICE\n"
-        "RATE JPY\n"
-        "RATE CNY\n"
-        "ADDPRICE item price\n"
-        "UPDATEPRICE item price\n"
-        "DELETEPRICE item"
+        "Modules:\n"
+        "✅ Shopping price comparison\n"
+        "✅ Taiwan price database\n"
+        "✅ Expense tracking\n"
+        "✅ Budget tracking"
     )
 
 
@@ -551,17 +617,8 @@ def handle_rate(text):
             "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY"
         )
 
-    one_twd_to_target = convert_currency(
-        1,
-        "TWD",
-        target_currency
-    )
-
-    thousand_target_to_twd = convert_currency(
-        1000,
-        target_currency,
-        "TWD"
-    )
+    one_twd_to_target = convert_currency(1, "TWD", target_currency)
+    thousand_target_to_twd = convert_currency(1000, target_currency, "TWD")
 
     if one_twd_to_target is None or thousand_target_to_twd is None:
         return "❌ Currency rate lookup failed."
@@ -580,11 +637,10 @@ def handle_addprice(text):
         return (
             "Example:\n"
             "ADDPRICE Sony XM6 10990\n\n"
-            "Or bulk add:\n"
+            "Bulk add:\n"
             "ADDPRICE\n"
             "AirPods Pro, 7490\n"
-            "Sony XM6, 10990\n"
-            "Samsung smart watch420, 3500"
+            "Sony XM6, 10990"
         )
 
     saved_lines = []
@@ -609,7 +665,7 @@ def handle_updateprice(text):
         return (
             "Example:\n"
             "UPDATEPRICE Sony XM6 9990\n\n"
-            "Or bulk update:\n"
+            "Bulk update:\n"
             "UPDATEPRICE\n"
             "AirPods Pro, 6990\n"
             "Sony XM6, 9990"
@@ -639,7 +695,7 @@ def handle_deleteprice(text):
         return (
             "Example:\n"
             "DELETEPRICE Sony XM6\n\n"
-            "Or bulk delete:\n"
+            "Bulk delete:\n"
             "DELETEPRICE\n"
             "AirPods Pro\n"
             "Sony XM6"
@@ -649,7 +705,6 @@ def handle_deleteprice(text):
 
     for item_name in items:
         result = delete_taiwan_price_from_sheet(item_name)
-
         deleted_count = result.get("deleted_count", 0) if result else 0
 
         if deleted_count > 0:
@@ -664,7 +719,144 @@ def handle_deleteprice(text):
     return "✅ Delete result:\n\n" + "\n".join(deleted_lines)
 
 
-def handle_text_message(user_key, text):
+def handle_spent(user_key, platform, text):
+    cleaned = remove_command(text, "spent")
+
+    item_name, price, currency = parse_message(cleaned)
+
+    if currency is None:
+        return (
+            "❌ Currency not detected for expense.\n\n"
+            "Example:\n"
+            "SPENT Lunch MYR 59.9\n"
+            "SPENT Hotel THB 2500\n"
+            "SPENT AirPods Pro USD 199"
+        )
+
+    if item_name is None:
+        return (
+            "Please use:\n"
+            "SPENT Lunch MYR 59.9\n"
+            "SPENT Hotel THB 2500"
+        )
+
+    converted_twd = convert_currency(price, currency, "TWD")
+
+    if converted_twd is None:
+        return "❌ Currency conversion failed."
+
+    log_expense(
+        user_key,
+        platform,
+        item_name,
+        currency,
+        price,
+        round(converted_twd)
+    )
+
+    return (
+        "✅ Expense recorded.\n\n"
+        f"📦 Item: {item_name}\n"
+        f"💰 Original: {currency} {format_money(price)}\n"
+        f"💱 Converted: NT${format_money(round(converted_twd))}"
+    )
+
+
+def handle_budget(user_key, text):
+    budget = parse_twprice(text)
+
+    if budget is None:
+        current_budget = get_budget(user_key)
+
+        if current_budget is None:
+            return (
+                "No budget set yet.\n\n"
+                "Set budget:\n"
+                "BUDGET 30000"
+            )
+
+        return (
+            "💰 Current Trip Budget\n\n"
+            f"Budget: NT${format_money(current_budget)}"
+        )
+
+    set_budget(user_key, budget)
+
+    return (
+        "✅ Budget set.\n\n"
+        f"Trip Budget: NT${format_money(budget)}"
+    )
+
+
+def handle_expense(user_key):
+    expenses = list_expenses(user_key)
+    budget = get_budget(user_key)
+
+    if not expenses:
+        if budget is None:
+            return (
+                "📊 No expenses recorded yet.\n\n"
+                "Record one:\n"
+                "SPENT Lunch MYR 59.9\n\n"
+                "Set budget:\n"
+                "BUDGET 30000"
+            )
+
+        return (
+            "📊 No expenses recorded yet.\n\n"
+            f"Budget: NT${format_money(budget)}"
+        )
+
+    total = 0
+    lines = []
+
+    for index, expense in enumerate(expenses, start=1):
+        item = expense.get("item", "")
+        converted_twd = float(expense.get("converted_twd", 0))
+        total += converted_twd
+
+        lines.append(
+            f"{index}. {item} → NT${format_money(converted_twd)}"
+        )
+
+    summary = "💸 Trip Expense Summary\n\n"
+
+    if budget is not None:
+        remaining = budget - total
+        summary += (
+            f"Budget: NT${format_money(budget)}\n"
+            f"Spent: NT${format_money(total)}\n"
+            f"Remaining: NT${format_money(remaining)}\n\n"
+        )
+    else:
+        summary += f"Spent: NT${format_money(total)}\n\n"
+
+    summary += "Purchases:\n" + "\n".join(lines)
+
+    if len(summary) > 4500:
+        summary = summary[:4400] + "\n\n...too many expenses, please check Google Sheet."
+
+    return summary
+
+
+def handle_resettrip(user_key):
+    result = reset_trip(user_key)
+
+    if not result or not result.get("success"):
+        return "❌ Reset failed."
+
+    deleted_expenses = result.get("deleted_expenses", 0)
+    deleted_budgets = result.get("deleted_budgets", 0)
+
+    return (
+        "♻️ Trip reset completed.\n\n"
+        f"Deleted expenses: {deleted_expenses}\n"
+        f"Deleted budgets: {deleted_budgets}\n\n"
+        "You can now start a new trip."
+    )
+
+
+def handle_text_message(user_key, platform, text):
     if is_help_command(text):
         return handle_help()
 
@@ -677,6 +869,18 @@ def handle_text_message(user_key, text):
     if is_rate_command(text):
         return handle_rate(text)
 
+    if is_spent_command(text):
+        return handle_spent(user_key, platform, text)
+
+    if is_expense_command(text):
+        return handle_expense(user_key)
+
+    if is_budget_command(text):
+        return handle_budget(user_key, text)
+
+    if is_resettrip_command(text):
+        return handle_resettrip(user_key)
+
     if is_addprice_command(text):
         return handle_addprice(text)
 
@@ -688,7 +892,6 @@ def handle_text_message(user_key, text):
 
     if is_twprice_command(text):
         taiwan_price = parse_twprice(text)
-
         pending_item = LAST_PENDING_ITEM.get(user_key)
 
         if taiwan_price is None:
@@ -721,12 +924,7 @@ def handle_text_message(user_key, text):
 
     if taiwan_price is None:
         LAST_PENDING_ITEM[user_key] = item_name
-
-        converted_twd = convert_currency(
-            price,
-            currency,
-            "TWD"
-        )
+        converted_twd = convert_currency(price, currency, "TWD")
 
         if converted_twd is None:
             return (
@@ -779,20 +977,18 @@ def home():
 @app.route("/webhook", methods=["POST"])
 def telegram_webhook():
     update = request.get_json()
-
     message = update.get("message")
 
     if not message:
         return jsonify({"ok": True})
 
     chat_id = message["chat"]["id"]
-
     text = message.get("text", "")
-
     user_key = f"telegram:{chat_id}"
 
     reply_text = handle_text_message(
         user_key,
+        "Telegram",
         text
     )
 
@@ -807,17 +1003,12 @@ def telegram_webhook():
 @app.route("/line-webhook", methods=["POST"])
 def line_webhook():
     body = request.get_data()
-
-    signature = request.headers.get(
-        "X-Line-Signature",
-        ""
-    )
+    signature = request.headers.get("X-Line-Signature", "")
 
     if not verify_line_signature(body, signature):
         return jsonify({"error": "Invalid signature"}), 403
 
     payload = request.get_json()
-
     events = payload.get("events", [])
 
     for event in events:
@@ -830,17 +1021,14 @@ def line_webhook():
             continue
 
         source = event.get("source", {})
-
         user_id = source.get("userId", "unknown")
-
         user_key = f"line:{user_id}"
-
         reply_token = event.get("replyToken")
-
         text = message.get("text", "")
 
         reply_text = handle_text_message(
             user_key,
+            "LINE",
             text
         )
 
