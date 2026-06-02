@@ -328,6 +328,18 @@ def reset_trip(user_key):
     })
 
 
+def calculate_total_expenses(user_key):
+    expenses = list_expenses(user_key)
+
+    total = 0
+
+    for expense in expenses:
+        converted_twd = float(expense.get("converted_twd", 0))
+        total += converted_twd
+
+    return total, expenses
+
+
 def parse_twprice(text):
     numbers = re.findall(r"\d+(?:\.\d+)?", text)
 
@@ -406,6 +418,10 @@ def parse_delete_items(text):
             results.append(item_name)
 
     return results
+
+
+def is_start_command(text):
+    return text.lower().strip() in ["start", "/start", "開始", "開始使用"]
 
 
 def is_help_command(text):
@@ -493,89 +509,166 @@ def format_result(result):
 
 def format_currency_required_message():
     return (
-        "❌ Currency not detected.\n\n"
-        "Please include currency in your message.\n\n"
-        "Examples:\n"
+        "❌ Currency not detected / 未偵測到幣別\n\n"
+        "Please include currency in your message.\n"
+        "請輸入商品價格時加上幣別。\n\n"
+        "Examples / 範例:\n"
         "AirPods Pro USD 199\n"
         "GU 黑皮夾克 JPY 23999\n"
         "Lunch MYR 59.9\n"
         "Xiaomi Power Bank CNY 129\n\n"
-        "Supported currencies:\n"
+        "Supported / 支援:\n"
         "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY\n\n"
-        "Notes:\n"
+        "Note / 注意:\n"
         "¥ is treated as JPY.\n"
-        "For China, please use CNY / RMB / yuan / 人民幣."
+        "¥ 會被視為日幣。中國請用 CNY / RMB / yuan / 人民幣。"
     )
 
 
 def format_missing_price_message(item_name, price, currency, converted_twd):
     return (
-        f"❌ Taiwan price not found.\n\n"
+        f"❌ Taiwan price not found / 尚無台灣參考價\n\n"
         f"📦 Item: {item_name}\n"
         f"💰 Original: {currency} {format_money(price)}\n"
         f"💱 Converted: NT${format_money(converted_twd)}\n\n"
-        f"Database has no Taiwan reference price yet, so I cannot judge BUY / DON'T BUY.\n\n"
-        f"Next actions:\n\n"
-        f"➕ Save Taiwan price:\n"
+        f"Database has no Taiwan reference price yet, so I cannot judge BUY / DON'T BUY.\n"
+        f"資料庫還沒有台灣參考價，因此暫時無法判斷是否值得買。\n\n"
+        f"Next actions / 下一步:\n\n"
+        f"➕ Save Taiwan price / 新增台灣價格:\n"
         f"ADDPRICE {item_name} 999\n\n"
-        f"⚡ Quick save current item:\n"
+        f"⚡ Quick save current item / 快速保存目前商品:\n"
         f"TWPRICE 999\n\n"
-        f"💱 Check currency rate:\n"
+        f"💱 Check currency rate / 查詢匯率:\n"
         f"RATE {currency}\n\n"
-        f"📖 Help:\n"
+        f"📖 Help / 說明:\n"
         f"HELP"
+    )
+
+
+def handle_start():
+    return (
+        "👋 Welcome to Travel Expense Tracker\n"
+        "歡迎使用 Travel Expense Tracker\n\n"
+        "🛍️ Smart Shopping / 智慧比價\n"
+        "Compare overseas prices against Taiwan reference prices.\n"
+        "比較海外價格與台灣參考價，判斷是否值得購買。\n\n"
+        "💸 Expense Tracking / 旅費記帳\n"
+        "Track your spending and manage travel budgets.\n"
+        "記錄旅遊花費並管理預算。\n\n"
+        "────────────────\n\n"
+        "You can start anywhere / 你可以從任何功能開始:\n\n"
+        "➕ Build Taiwan price DB / 建立台灣價格資料庫\n"
+        "ADDPRICE AirPods Pro 7490\n\n"
+        "🔍 Compare price / 查詢海外價格\n"
+        "AirPods Pro USD 199\n\n"
+        "💰 Record expense / 記錄實際花費\n"
+        "SPENT Lunch MYR 59.9\n\n"
+        "📊 View spending / 查看花費\n"
+        "EXPENSE\n\n"
+        "📖 Full guide / 完整說明\n"
+        "HELP"
     )
 
 
 def handle_help():
     return (
-        "📖 Travel Expense Tracker Commands\n\n"
-        "🛍️ Check overseas price:\n"
+        "📖 Travel Expense Tracker Guide\n"
+        "使用說明\n\n"
+        "This bot has 2 main modules:\n"
+        "這個 Bot 有兩個主要功能:\n\n"
+        "🛍️ MODULE A: Smart Shopping / 智慧比價\n"
+        "Compare overseas prices with Taiwan reference prices.\n"
+        "比較海外價格與台灣參考價。\n\n"
+        "Why Taiwan price DB matters:\n"
+        "為什麼需要台灣價格資料庫:\n\n"
+        "Overseas converted price vs Taiwan reference price\n"
+        "海外換算台幣價格 vs 台灣參考價\n\n"
+        "Then bot can judge:\n"
+        "然後 Bot 才能判斷:\n"
+        "✅ BUY / 🟡 NORMAL / ❌ DON'T BUY\n\n"
+        "🔍 Check overseas price / 查詢海外價格:\n"
         "AirPods Pro USD 199\n"
         "GU 黑皮夾克 JPY 23999\n\n"
-        "➕ Add Taiwan price:\n"
+        "➕ Add Taiwan price / 新增台灣價格:\n"
         "ADDPRICE AirPods Pro 7490\n\n"
-        "🔄 Update Taiwan price:\n"
+        "Bulk add / 批量新增:\n"
+        "ADDPRICE\n"
+        "AirPods Pro, 7490\n"
+        "Sony XM6, 10990\n\n"
+        "🔄 Update / 更新:\n"
         "UPDATEPRICE AirPods Pro 6990\n\n"
-        "🗑️ Delete Taiwan price:\n"
+        "🗑️ Delete / 刪除:\n"
         "DELETEPRICE AirPods Pro\n\n"
-        "📋 List Taiwan prices:\n"
+        "📋 List DB / 查看資料庫:\n"
         "LISTPRICE\n\n"
-        "💱 Currency rate:\n"
-        "RATE JPY\n"
-        "RATE CNY\n\n"
-        "💸 Record actual spending:\n"
+        "────────────────\n\n"
+        "💸 MODULE B: Expense Tracking / 旅費記帳\n"
+        "Record actual purchases and monitor travel budget.\n"
+        "記錄實際花費並追蹤旅遊預算。\n\n"
+        "💰 Record spending / 記錄花費:\n"
         "SPENT Lunch MYR 59.9\n"
         "SPENT Hotel THB 2500\n\n"
-        "💰 Set trip budget:\n"
+        "💵 Set budget / 設定預算:\n"
         "BUDGET 30000\n\n"
-        "📊 View trip expenses:\n"
+        "📊 View expenses / 查看花費:\n"
         "EXPENSE\n\n"
-        "♻️ Reset trip expenses:\n"
+        "♻️ Reset trip / 重置旅程:\n"
         "RESETTRIP\n\n"
-        "📌 Status:\n"
+        "────────────────\n\n"
+        "💱 Utilities / 工具:\n"
+        "RATE JPY\n"
+        "RATE USD\n"
+        "RATE MYR\n"
+        "RATE CNY\n\n"
+        "📌 Status / 狀態:\n"
         "STATUS"
     )
 
 
-def handle_status():
-    items = list_taiwan_prices_from_sheet()
-    expenses = []
-    supported = ", ".join(SUPPORTED_CURRENCIES.keys())
+def format_budget_block(budget, total):
+    if budget is None:
+        return (
+            f"Spent / 已花費: NT${format_money(total)}\n\n"
+            "⚠️ No budget set / 尚未設定預算\n\n"
+            "Recommended / 建議:\n"
+            "BUDGET 30000"
+        )
+
+    remaining = budget - total
+
+    if remaining < 0:
+        return (
+            f"Budget / 預算: NT${format_money(budget)}\n"
+            f"Spent / 已花費: NT${format_money(total)}\n\n"
+            "🚨 OVER BUDGET / 已超出預算\n\n"
+            f"Exceeded by / 超出: NT${format_money(abs(remaining))}"
+        )
 
     return (
-        "📊 Travel Expense Tracker Status\n\n"
-        f"Database items: {len(items)}\n\n"
-        "Platforms:\n"
-        "✅ Telegram\n"
-        "✅ LINE\n\n"
-        "Supported currencies:\n"
+        f"Budget / 預算: NT${format_money(budget)}\n"
+        f"Spent / 已花費: NT${format_money(total)}\n\n"
+        f"✅ Remaining / 剩餘: NT${format_money(remaining)}"
+    )
+
+
+def handle_status(user_key):
+    items = list_taiwan_prices_from_sheet()
+    total, expenses = calculate_total_expenses(user_key)
+    budget = get_budget(user_key)
+
+    supported = " ".join(SUPPORTED_CURRENCIES.keys())
+
+    return (
+        "📊 Travel Expense Tracker Status\n"
+        "目前狀態\n\n"
+        "🛍️ Smart Shopping / 智慧比價\n"
+        f"Taiwan DB items / 台灣價格資料庫: {len(items)}\n\n"
+        "💸 Expense Tracking / 旅費記帳\n"
+        f"{format_budget_block(budget, total)}\n\n"
+        "────────────────\n\n"
+        "🌍 Supported currencies / 支援幣別:\n"
         f"{supported}\n\n"
-        "Modules:\n"
-        "✅ Shopping price comparison\n"
-        "✅ Taiwan price database\n"
-        "✅ Expense tracking\n"
-        "✅ Budget tracking"
+        "📖 Type HELP for guide / 輸入 HELP 查看說明"
     )
 
 
@@ -608,12 +701,12 @@ def handle_rate(text):
 
     if not target_currency:
         return (
-            "Please use:\n"
+            "Please use / 請使用:\n"
             "RATE JPY\n"
             "RATE USD\n"
             "RATE MYR\n"
             "RATE CNY\n\n"
-            "Supported:\n"
+            "Supported / 支援:\n"
             "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY"
         )
 
@@ -624,7 +717,8 @@ def handle_rate(text):
         return "❌ Currency rate lookup failed."
 
     return (
-        f"💱 Current Rate Reference\n\n"
+        f"💱 Current Rate Reference\n"
+        f"目前匯率參考\n\n"
         f"NT$1 ≈ {target_currency} {format_money(one_twd_to_target)}\n"
         f"{target_currency} 1000 ≈ NT${format_money(thousand_target_to_twd)}"
     )
@@ -635,9 +729,9 @@ def handle_addprice(text):
 
     if not items:
         return (
-            "Example:\n"
+            "Example / 範例:\n"
             "ADDPRICE Sony XM6 10990\n\n"
-            "Bulk add:\n"
+            "Bulk add / 批量新增:\n"
             "ADDPRICE\n"
             "AirPods Pro, 7490\n"
             "Sony XM6, 10990"
@@ -655,7 +749,7 @@ def handle_addprice(text):
             f"📦 {item['item']} → NT${format_money(item['taiwan_price'])}"
         )
 
-    return "✅ Taiwan price added.\n\n" + "\n".join(saved_lines)
+    return "✅ Taiwan price added / 台灣價格已新增\n\n" + "\n".join(saved_lines)
 
 
 def handle_updateprice(text):
@@ -663,9 +757,9 @@ def handle_updateprice(text):
 
     if not items:
         return (
-            "Example:\n"
+            "Example / 範例:\n"
             "UPDATEPRICE Sony XM6 9990\n\n"
-            "Bulk update:\n"
+            "Bulk update / 批量更新:\n"
             "UPDATEPRICE\n"
             "AirPods Pro, 6990\n"
             "Sony XM6, 9990"
@@ -685,7 +779,7 @@ def handle_updateprice(text):
             f"📦 {item['item']} → NT${format_money(item['taiwan_price'])} ({status})"
         )
 
-    return "✅ Taiwan price updated.\n\n" + "\n".join(updated_lines)
+    return "✅ Taiwan price updated / 台灣價格已更新\n\n" + "\n".join(updated_lines)
 
 
 def handle_deleteprice(text):
@@ -693,9 +787,9 @@ def handle_deleteprice(text):
 
     if not items:
         return (
-            "Example:\n"
+            "Example / 範例:\n"
             "DELETEPRICE Sony XM6\n\n"
-            "Bulk delete:\n"
+            "Bulk delete / 批量刪除:\n"
             "DELETEPRICE\n"
             "AirPods Pro\n"
             "Sony XM6"
@@ -716,7 +810,7 @@ def handle_deleteprice(text):
                 f"⚠️ {item_name} not found"
             )
 
-    return "✅ Delete result:\n\n" + "\n".join(deleted_lines)
+    return "✅ Delete result / 刪除結果:\n\n" + "\n".join(deleted_lines)
 
 
 def handle_spent(user_key, platform, text):
@@ -726,8 +820,9 @@ def handle_spent(user_key, platform, text):
 
     if currency is None:
         return (
-            "❌ Currency not detected for expense.\n\n"
-            "Example:\n"
+            "❌ Currency not detected for expense.\n"
+            "記帳時請輸入幣別。\n\n"
+            "Example / 範例:\n"
             "SPENT Lunch MYR 59.9\n"
             "SPENT Hotel THB 2500\n"
             "SPENT AirPods Pro USD 199"
@@ -735,7 +830,7 @@ def handle_spent(user_key, platform, text):
 
     if item_name is None:
         return (
-            "Please use:\n"
+            "Please use / 請使用:\n"
             "SPENT Lunch MYR 59.9\n"
             "SPENT Hotel THB 2500"
         )
@@ -745,21 +840,53 @@ def handle_spent(user_key, platform, text):
     if converted_twd is None:
         return "❌ Currency conversion failed."
 
+    rounded_twd = round(converted_twd)
+
     log_expense(
         user_key,
         platform,
         item_name,
         currency,
         price,
-        round(converted_twd)
+        rounded_twd
     )
 
-    return (
-        "✅ Expense recorded.\n\n"
+    total, expenses = calculate_total_expenses(user_key)
+    budget = get_budget(user_key)
+
+    reply = (
+        "✅ Expense recorded / 花費已記錄\n\n"
         f"📦 Item: {item_name}\n"
         f"💰 Original: {currency} {format_money(price)}\n"
-        f"💱 Converted: NT${format_money(round(converted_twd))}"
+        f"💱 Converted: NT${format_money(rounded_twd)}"
     )
+
+    if budget is None:
+        reply += (
+            "\n\n⚠️ No budget set / 尚未設定預算\n\n"
+            "Recommended / 建議:\n"
+            "BUDGET 30000"
+        )
+        return reply
+
+    remaining = budget - total
+
+    if remaining < 0:
+        reply += (
+            "\n\n🚨 OVER BUDGET / 已超出預算\n\n"
+            f"Budget / 預算: NT${format_money(budget)}\n"
+            f"Spent / 已花費: NT${format_money(total)}\n"
+            f"Exceeded by / 超出: NT${format_money(abs(remaining))}"
+        )
+    else:
+        reply += (
+            "\n\n✅ Within budget / 預算內\n\n"
+            f"Budget / 預算: NT${format_money(budget)}\n"
+            f"Spent / 已花費: NT${format_money(total)}\n"
+            f"Remaining / 剩餘: NT${format_money(remaining)}"
+        )
+
+    return reply
 
 
 def handle_budget(user_key, text):
@@ -770,21 +897,22 @@ def handle_budget(user_key, text):
 
         if current_budget is None:
             return (
-                "No budget set yet.\n\n"
-                "Set budget:\n"
+                "No budget set yet / 尚未設定預算。\n\n"
+                "Set budget / 設定預算:\n"
                 "BUDGET 30000"
             )
 
+        total, expenses = calculate_total_expenses(user_key)
         return (
-            "💰 Current Trip Budget\n\n"
-            f"Budget: NT${format_money(current_budget)}"
+            "💰 Current Trip Budget / 目前旅遊預算\n\n"
+            f"{format_budget_block(current_budget, total)}"
         )
 
     set_budget(user_key, budget)
 
     return (
-        "✅ Budget set.\n\n"
-        f"Trip Budget: NT${format_money(budget)}"
+        "✅ Budget set / 預算已設定\n\n"
+        f"Trip Budget / 旅遊預算: NT${format_money(budget)}"
     )
 
 
@@ -795,16 +923,16 @@ def handle_expense(user_key):
     if not expenses:
         if budget is None:
             return (
-                "📊 No expenses recorded yet.\n\n"
-                "Record one:\n"
+                "📊 No expenses recorded yet / 尚未記錄花費\n\n"
+                "Record one / 記錄一筆:\n"
                 "SPENT Lunch MYR 59.9\n\n"
-                "Set budget:\n"
+                "Set budget / 設定預算:\n"
                 "BUDGET 30000"
             )
 
         return (
-            "📊 No expenses recorded yet.\n\n"
-            f"Budget: NT${format_money(budget)}"
+            "📊 No expenses recorded yet / 尚未記錄花費\n\n"
+            f"Budget / 預算: NT${format_money(budget)}"
         )
 
     total = 0
@@ -819,19 +947,12 @@ def handle_expense(user_key):
             f"{index}. {item} → NT${format_money(converted_twd)}"
         )
 
-    summary = "💸 Trip Expense Summary\n\n"
+    summary = "💸 Trip Expense Summary\n旅費摘要\n\n"
 
-    if budget is not None:
-        remaining = budget - total
-        summary += (
-            f"Budget: NT${format_money(budget)}\n"
-            f"Spent: NT${format_money(total)}\n"
-            f"Remaining: NT${format_money(remaining)}\n\n"
-        )
-    else:
-        summary += f"Spent: NT${format_money(total)}\n\n"
+    summary += format_budget_block(budget, total)
 
-    summary += "Purchases:\n" + "\n".join(lines)
+    summary += "\n\n────────────────\n\nPurchases / 花費明細:\n"
+    summary += "\n".join(lines)
 
     if len(summary) > 4500:
         summary = summary[:4400] + "\n\n...too many expenses, please check Google Sheet."
@@ -849,19 +970,23 @@ def handle_resettrip(user_key):
     deleted_budgets = result.get("deleted_budgets", 0)
 
     return (
-        "♻️ Trip reset completed.\n\n"
-        f"Deleted expenses: {deleted_expenses}\n"
-        f"Deleted budgets: {deleted_budgets}\n\n"
-        "You can now start a new trip."
+        "♻️ Trip reset completed / 旅程已重置\n\n"
+        f"Deleted expenses / 刪除花費: {deleted_expenses}\n"
+        f"Deleted budgets / 刪除預算: {deleted_budgets}\n\n"
+        "You can now start a new trip.\n"
+        "現在可以開始新的旅程。"
     )
 
 
 def handle_text_message(user_key, platform, text):
+    if is_start_command(text):
+        return handle_start()
+
     if is_help_command(text):
         return handle_help()
 
     if is_status_command(text):
-        return handle_status()
+        return handle_status(user_key)
 
     if is_listprice_command(text):
         return handle_listprice()
@@ -895,7 +1020,7 @@ def handle_text_message(user_key, platform, text):
         pending_item = LAST_PENDING_ITEM.get(user_key)
 
         if taiwan_price is None:
-            return "Please use:\nTWPRICE 1490"
+            return "Please use / 請使用:\nTWPRICE 1490"
 
         if not pending_item:
             return "No pending item found. Please search an item first."
@@ -906,10 +1031,11 @@ def handle_text_message(user_key, platform, text):
         )
 
         return (
-            f"✅ Taiwan price saved.\n\n"
+            f"✅ Taiwan price saved / 台灣價格已保存\n\n"
             f"📦 Item: {pending_item}\n"
             f"🇹🇼 Taiwan Price: NT${format_money(taiwan_price)}\n\n"
-            f"Now send the item again to evaluate it."
+            f"Now send the item again to evaluate it.\n"
+            f"現在可以重新輸入商品價格進行判斷。"
         )
 
     item_name, price, currency = parse_message(text)
