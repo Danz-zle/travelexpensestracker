@@ -22,6 +22,7 @@ TELEGRAM_BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 LAST_PENDING_ITEM = {}
 
 SUPPORTED_CURRENCIES = {
+    "TWD": ["twd", "ntd", "nt$", "nt", "台幣", "新台幣"],
     "JPY": ["jpy", "yen", "¥", "円", "日幣"],
     "USD": ["usd", "usd$", "us$", "$", "美金"],
     "EUR": ["eur", "euro", "€"],
@@ -163,6 +164,17 @@ def format_money(value):
     return int(value)
 
 
+def convert_to_twd(amount, currency):
+    if currency == "TWD":
+        return amount
+
+    return convert_currency(
+        amount,
+        currency,
+        "TWD"
+    )
+
+
 def call_sheets_api(data):
     try:
         response = requests.post(
@@ -257,6 +269,38 @@ def delete_taiwan_price_from_sheet(item_name):
     })
 
 
+def get_active_trip(user_key):
+    result = call_sheets_api({
+        "action": "get_active_trip",
+        "user_key": user_key
+    })
+
+    if result and result.get("success"):
+        return result.get("trip_name", "Default")
+
+    return "Default"
+
+
+def set_active_trip(user_key, trip_name):
+    return call_sheets_api({
+        "action": "set_active_trip",
+        "user_key": user_key,
+        "trip_name": trip_name
+    })
+
+
+def list_trips(user_key):
+    result = call_sheets_api({
+        "action": "list_trips",
+        "user_key": user_key
+    })
+
+    if result and result.get("success"):
+        return result.get("trips", [])
+
+    return []
+
+
 def log_to_google_sheets(result, raw_message):
     if not SHEETS_WEBHOOK_URL:
         return
@@ -277,10 +321,11 @@ def log_to_google_sheets(result, raw_message):
     })
 
 
-def log_expense(user_key, platform, item, currency, original_price, converted_twd):
+def log_expense(user_key, trip_name, platform, item, currency, original_price, converted_twd):
     return call_sheets_api({
         "action": "log_expense",
         "user_key": user_key,
+        "trip_name": trip_name,
         "platform": platform,
         "item": item,
         "currency": currency,
@@ -289,10 +334,11 @@ def log_expense(user_key, platform, item, currency, original_price, converted_tw
     })
 
 
-def list_expenses(user_key):
+def list_expenses(user_key, trip_name):
     result = call_sheets_api({
         "action": "list_expenses",
-        "user_key": user_key
+        "user_key": user_key,
+        "trip_name": trip_name
     })
 
     if result and result.get("success"):
@@ -301,18 +347,20 @@ def list_expenses(user_key):
     return []
 
 
-def set_budget(user_key, budget_twd):
+def set_budget(user_key, trip_name, budget_twd):
     return call_sheets_api({
         "action": "set_budget",
         "user_key": user_key,
+        "trip_name": trip_name,
         "budget_twd": budget_twd
     })
 
 
-def get_budget(user_key):
+def get_budget(user_key, trip_name):
     result = call_sheets_api({
         "action": "get_budget",
-        "user_key": user_key
+        "user_key": user_key,
+        "trip_name": trip_name
     })
 
     if result and result.get("found"):
@@ -321,15 +369,8 @@ def get_budget(user_key):
     return None
 
 
-def reset_trip(user_key):
-    return call_sheets_api({
-        "action": "reset_trip",
-        "user_key": user_key
-    })
-
-
-def calculate_total_expenses(user_key):
-    expenses = list_expenses(user_key)
+def calculate_total_expenses(user_key, trip_name):
+    expenses = list_expenses(user_key, trip_name)
 
     total = 0
 
@@ -468,6 +509,14 @@ def is_budget_command(text):
     return text.lower().startswith("budget")
 
 
+def is_newtrip_command(text):
+    return text.lower().startswith("newtrip")
+
+
+def is_mytrips_command(text):
+    return text.lower().strip() in ["mytrips", "trips", "旅程"]
+
+
 def is_resettrip_command(text):
     return text.lower().strip() in ["resettrip", "reset trip", "重置旅程"]
 
@@ -516,9 +565,10 @@ def format_currency_required_message():
         "AirPods Pro USD 199\n"
         "GU 黑皮夾克 JPY 23999\n"
         "Lunch MYR 59.9\n"
+        "Flight TWD 13435\n"
         "Xiaomi Power Bank CNY 129\n\n"
         "Supported / 支援:\n"
-        "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY\n\n"
+        "TWD, JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY\n\n"
         "Note / 注意:\n"
         "¥ is treated as JPY.\n"
         "¥ 會被視為日幣。中國請用 CNY / RMB / yuan / 人民幣。"
@@ -553,10 +603,12 @@ def handle_start():
         "Compare overseas prices against Taiwan reference prices.\n"
         "比較海外價格與台灣參考價，判斷是否值得購買。\n\n"
         "💸 Expense Tracking / 旅費記帳\n"
-        "Track your spending and manage travel budgets.\n"
-        "記錄旅遊花費並管理預算。\n\n"
+        "Track your spending by trip and manage travel budgets.\n"
+        "依照不同旅程記錄花費並管理預算。\n\n"
         "────────────────\n\n"
         "You can start anywhere / 你可以從任何功能開始:\n\n"
+        "🧳 Start a trip / 建立旅程\n"
+        "NEWTRIP Japan Sakura 2027\n\n"
         "➕ Build Taiwan price DB / 建立台灣價格資料庫\n"
         "ADDPRICE AirPods Pro 7490\n\n"
         "🔍 Compare price / 查詢海外價格\n"
@@ -603,17 +655,23 @@ def handle_help():
         "LISTPRICE\n\n"
         "────────────────\n\n"
         "💸 MODULE B: Expense Tracking / 旅費記帳\n"
-        "Record actual purchases and monitor travel budget.\n"
-        "記錄實際花費並追蹤旅遊預算。\n\n"
+        "Record expenses by trip and monitor travel budget.\n"
+        "依照不同旅程記錄花費並追蹤預算。\n\n"
+        "🧳 Create or switch trip / 建立或切換旅程:\n"
+        "NEWTRIP Japan Sakura 2027\n\n"
+        "📂 View trips / 查看旅程:\n"
+        "MYTRIPS\n\n"
         "💰 Record spending / 記錄花費:\n"
         "SPENT Lunch MYR 59.9\n"
+        "SPENT Flight TWD 13435\n"
         "SPENT Hotel THB 2500\n\n"
         "💵 Set budget / 設定預算:\n"
         "BUDGET 30000\n\n"
         "📊 View expenses / 查看花費:\n"
         "EXPENSE\n\n"
-        "♻️ Reset trip / 重置旅程:\n"
-        "RESETTRIP\n\n"
+        "⚠️ ResetTrip / 重置旅程:\n"
+        "RESETTRIP is disabled to protect history.\n"
+        "為避免誤刪歷史資料，已停用 RESETTRIP。\n\n"
         "────────────────\n\n"
         "💱 Utilities / 工具:\n"
         "RATE JPY\n"
@@ -653,14 +711,17 @@ def format_budget_block(budget, total):
 
 def handle_status(user_key):
     items = list_taiwan_prices_from_sheet()
-    total, expenses = calculate_total_expenses(user_key)
-    budget = get_budget(user_key)
+    trip_name = get_active_trip(user_key)
+    total, expenses = calculate_total_expenses(user_key, trip_name)
+    budget = get_budget(user_key, trip_name)
 
     supported = " ".join(SUPPORTED_CURRENCIES.keys())
 
     return (
         "📊 Travel Expense Tracker Status\n"
         "目前狀態\n\n"
+        "🧳 Active Trip / 目前旅程\n"
+        f"{trip_name}\n\n"
         "🛍️ Smart Shopping / 智慧比價\n"
         f"Taiwan DB items / 台灣價格資料庫: {len(items)}\n\n"
         "💸 Expense Tracking / 旅費記帳\n"
@@ -707,7 +768,15 @@ def handle_rate(text):
             "RATE MYR\n"
             "RATE CNY\n\n"
             "Supported / 支援:\n"
-            "JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY"
+            "TWD, JPY, USD, EUR, KRW, HKD, SGD, MYR, THB, VND, PHP, KHR, CNY"
+        )
+
+    if target_currency == "TWD":
+        return (
+            "💱 Current Rate Reference\n"
+            "目前匯率參考\n\n"
+            "NT$1 = TWD 1\n"
+            "TWD 1000 = NT$1000"
         )
 
     one_twd_to_target = convert_currency(1, "TWD", target_currency)
@@ -813,6 +882,81 @@ def handle_deleteprice(text):
     return "✅ Delete result / 刪除結果:\n\n" + "\n".join(deleted_lines)
 
 
+def handle_newtrip(user_key, text):
+    trip_name = remove_command(text, "newtrip")
+
+    if not trip_name:
+        return (
+            "Please enter trip name / 請輸入旅程名稱:\n\n"
+            "NEWTRIP Japan Sakura 2027\n"
+            "NEWTRIP Bangkok Food Trip\n"
+            "NEWTRIP Korea Family Trip"
+        )
+
+    set_active_trip(user_key, trip_name)
+
+    budget = get_budget(user_key, trip_name)
+
+    reply = (
+        "✅ Active trip set / 目前旅程已設定\n\n"
+        f"🧳 Trip / 旅程:\n"
+        f"{trip_name}\n\n"
+        "All SPENT / BUDGET / EXPENSE commands will use this trip.\n"
+        "接下來的 SPENT / BUDGET / EXPENSE 都會記錄在此旅程。"
+    )
+
+    if budget is None:
+        reply += (
+            "\n\n💡 Budget not set yet / 尚未設定預算\n\n"
+            "Suggested / 建議:\n"
+            "BUDGET 30000"
+        )
+
+    return reply
+
+
+def handle_mytrips(user_key):
+    trips = list_trips(user_key)
+
+    if not trips:
+        return (
+            "📂 No trips yet / 尚未建立旅程\n\n"
+            "Create one / 建立旅程:\n"
+            "NEWTRIP Japan Sakura 2027"
+        )
+
+    lines = []
+
+    for index, trip in enumerate(trips, start=1):
+        trip_name = trip.get("trip_name", "")
+        is_active = str(trip.get("is_active", "")).lower() == "true"
+
+        marker = "✅" if is_active else "▫️"
+
+        total, expenses = calculate_total_expenses(user_key, trip_name)
+        budget = get_budget(user_key, trip_name)
+
+        if budget is None:
+            budget_text = f"Spent NT${format_money(total)}"
+        else:
+            remaining = budget - total
+            if remaining < 0:
+                budget_text = f"Spent NT${format_money(total)} / Over NT${format_money(abs(remaining))}"
+            else:
+                budget_text = f"Spent NT${format_money(total)} / Remaining NT${format_money(remaining)}"
+
+        lines.append(
+            f"{index}. {marker} {trip_name}\n   {budget_text}"
+        )
+
+    return (
+        "📂 My Trips / 我的旅程\n\n" +
+        "\n".join(lines) +
+        "\n\nSwitch or create trip / 切換或建立旅程:\n"
+        "NEWTRIP Japan Sakura 2027"
+    )
+
+
 def handle_spent(user_key, platform, text):
     cleaned = remove_command(text, "spent")
 
@@ -824,6 +968,7 @@ def handle_spent(user_key, platform, text):
             "記帳時請輸入幣別。\n\n"
             "Example / 範例:\n"
             "SPENT Lunch MYR 59.9\n"
+            "SPENT Flight TWD 13435\n"
             "SPENT Hotel THB 2500\n"
             "SPENT AirPods Pro USD 199"
         )
@@ -832,10 +977,12 @@ def handle_spent(user_key, platform, text):
         return (
             "Please use / 請使用:\n"
             "SPENT Lunch MYR 59.9\n"
-            "SPENT Hotel THB 2500"
+            "SPENT Flight TWD 13435"
         )
 
-    converted_twd = convert_currency(price, currency, "TWD")
+    trip_name = get_active_trip(user_key)
+
+    converted_twd = convert_to_twd(price, currency)
 
     if converted_twd is None:
         return "❌ Currency conversion failed."
@@ -844,6 +991,7 @@ def handle_spent(user_key, platform, text):
 
     log_expense(
         user_key,
+        trip_name,
         platform,
         item_name,
         currency,
@@ -851,11 +999,12 @@ def handle_spent(user_key, platform, text):
         rounded_twd
     )
 
-    total, expenses = calculate_total_expenses(user_key)
-    budget = get_budget(user_key)
+    total, expenses = calculate_total_expenses(user_key, trip_name)
+    budget = get_budget(user_key, trip_name)
 
     reply = (
         "✅ Expense recorded / 花費已記錄\n\n"
+        f"🧳 Trip: {trip_name}\n"
         f"📦 Item: {item_name}\n"
         f"💰 Original: {currency} {format_money(price)}\n"
         f"💱 Converted: NT${format_money(rounded_twd)}"
@@ -892,38 +1041,45 @@ def handle_spent(user_key, platform, text):
 def handle_budget(user_key, text):
     budget = parse_twprice(text)
 
+    trip_name = get_active_trip(user_key)
+
     if budget is None:
-        current_budget = get_budget(user_key)
+        current_budget = get_budget(user_key, trip_name)
 
         if current_budget is None:
             return (
+                f"🧳 Trip: {trip_name}\n\n"
                 "No budget set yet / 尚未設定預算。\n\n"
                 "Set budget / 設定預算:\n"
                 "BUDGET 30000"
             )
 
-        total, expenses = calculate_total_expenses(user_key)
+        total, expenses = calculate_total_expenses(user_key, trip_name)
         return (
-            "💰 Current Trip Budget / 目前旅遊預算\n\n"
+            f"💰 Current Trip Budget / 目前旅遊預算\n\n"
+            f"🧳 Trip: {trip_name}\n\n"
             f"{format_budget_block(current_budget, total)}"
         )
 
-    set_budget(user_key, budget)
+    set_budget(user_key, trip_name, budget)
 
     return (
         "✅ Budget set / 預算已設定\n\n"
+        f"🧳 Trip: {trip_name}\n"
         f"Trip Budget / 旅遊預算: NT${format_money(budget)}"
     )
 
 
 def handle_expense(user_key):
-    expenses = list_expenses(user_key)
-    budget = get_budget(user_key)
+    trip_name = get_active_trip(user_key)
+    expenses = list_expenses(user_key, trip_name)
+    budget = get_budget(user_key, trip_name)
 
     if not expenses:
         if budget is None:
             return (
                 "📊 No expenses recorded yet / 尚未記錄花費\n\n"
+                f"🧳 Trip: {trip_name}\n\n"
                 "Record one / 記錄一筆:\n"
                 "SPENT Lunch MYR 59.9\n\n"
                 "Set budget / 設定預算:\n"
@@ -932,6 +1088,7 @@ def handle_expense(user_key):
 
         return (
             "📊 No expenses recorded yet / 尚未記錄花費\n\n"
+            f"🧳 Trip: {trip_name}\n"
             f"Budget / 預算: NT${format_money(budget)}"
         )
 
@@ -947,7 +1104,11 @@ def handle_expense(user_key):
             f"{index}. {item} → NT${format_money(converted_twd)}"
         )
 
-    summary = "💸 Trip Expense Summary\n旅費摘要\n\n"
+    summary = (
+        "💸 Trip Expense Summary\n"
+        "旅費摘要\n\n"
+        f"🧳 Trip: {trip_name}\n\n"
+    )
 
     summary += format_budget_block(budget, total)
 
@@ -960,21 +1121,15 @@ def handle_expense(user_key):
     return summary
 
 
-def handle_resettrip(user_key):
-    result = reset_trip(user_key)
-
-    if not result or not result.get("success"):
-        return "❌ Reset failed."
-
-    deleted_expenses = result.get("deleted_expenses", 0)
-    deleted_budgets = result.get("deleted_budgets", 0)
-
+def handle_resettrip():
     return (
-        "♻️ Trip reset completed / 旅程已重置\n\n"
-        f"Deleted expenses / 刪除花費: {deleted_expenses}\n"
-        f"Deleted budgets / 刪除預算: {deleted_budgets}\n\n"
-        "You can now start a new trip.\n"
-        "現在可以開始新的旅程。"
+        "⚠️ RESETTRIP is disabled / RESETTRIP 已停用\n\n"
+        "To protect your travel history, trip deletion is disabled.\n"
+        "為避免誤刪歷史旅程資料，目前不支援清除旅程。\n\n"
+        "Start or switch trip instead / 請改用建立或切換旅程:\n"
+        "NEWTRIP Japan Sakura 2027\n\n"
+        "View trips / 查看旅程:\n"
+        "MYTRIPS"
     )
 
 
@@ -994,6 +1149,12 @@ def handle_text_message(user_key, platform, text):
     if is_rate_command(text):
         return handle_rate(text)
 
+    if is_newtrip_command(text):
+        return handle_newtrip(user_key, text)
+
+    if is_mytrips_command(text):
+        return handle_mytrips(user_key)
+
     if is_spent_command(text):
         return handle_spent(user_key, platform, text)
 
@@ -1004,7 +1165,7 @@ def handle_text_message(user_key, platform, text):
         return handle_budget(user_key, text)
 
     if is_resettrip_command(text):
-        return handle_resettrip(user_key)
+        return handle_resettrip()
 
     if is_addprice_command(text):
         return handle_addprice(text)
@@ -1050,7 +1211,7 @@ def handle_text_message(user_key, platform, text):
 
     if taiwan_price is None:
         LAST_PENDING_ITEM[user_key] = item_name
-        converted_twd = convert_currency(price, currency, "TWD")
+        converted_twd = convert_to_twd(price, currency)
 
         if converted_twd is None:
             return (
