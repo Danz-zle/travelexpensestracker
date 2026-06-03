@@ -513,8 +513,25 @@ def is_newtrip_command(text):
     return text.lower().startswith("newtrip")
 
 
+def is_usedefault_command(text):
+    return text.lower().strip() in [
+        "usedefault",
+        "default",
+        "dailymode",
+        "daily",
+        "日常模式"
+    ]
+
+
 def is_mytrips_command(text):
-    return text.lower().strip() in ["mytrips", "trips", "旅程"]
+    return text.lower().strip() in [
+        "mytrips",
+        "mytrip",
+        "trips",
+        "triplist",
+        "旅程",
+        "我的旅程"
+    ]
 
 
 def is_resettrip_command(text):
@@ -609,6 +626,8 @@ def handle_start():
         "You can start anywhere / 你可以從任何功能開始:\n\n"
         "🧳 Start a trip / 建立旅程\n"
         "NEWTRIP Japan Sakura 2027\n\n"
+        "🏠 Daily mode / 日常模式\n"
+        "USEDEFAULT\n\n"
         "➕ Build Taiwan price DB / 建立台灣價格資料庫\n"
         "ADDPRICE AirPods Pro 7490\n\n"
         "🔍 Compare price / 查詢海外價格\n"
@@ -659,6 +678,8 @@ def handle_help():
         "依照不同旅程記錄花費並追蹤預算。\n\n"
         "🧳 Create or switch trip / 建立或切換旅程:\n"
         "NEWTRIP Japan Sakura 2027\n\n"
+        "🏠 Daily mode / 日常模式:\n"
+        "USEDEFAULT\n\n"
         "📂 View trips / 查看旅程:\n"
         "MYTRIPS\n\n"
         "💰 Record spending / 記錄花費:\n"
@@ -669,9 +690,6 @@ def handle_help():
         "BUDGET 30000\n\n"
         "📊 View expenses / 查看花費:\n"
         "EXPENSE\n\n"
-        "⚠️ ResetTrip / 重置旅程:\n"
-        "RESETTRIP is disabled to protect history.\n"
-        "為避免誤刪歷史資料，已停用 RESETTRIP。\n\n"
         "────────────────\n\n"
         "💱 Utilities / 工具:\n"
         "RATE JPY\n"
@@ -915,6 +933,24 @@ def handle_newtrip(user_key, text):
     return reply
 
 
+def handle_usedefault(user_key):
+    set_active_trip(
+        user_key,
+        "Default"
+    )
+
+    return (
+        "🏠 Switched to Daily Mode\n"
+        "已切換至日常模式\n\n"
+        "🧳 Current Bucket:\n"
+        "Default\n\n"
+        "All new SPENT / BUDGET / EXPENSE records\n"
+        "will use Default.\n\n"
+        "之後所有 SPENT / BUDGET / EXPENSE\n"
+        "都會記錄在 Default。"
+    )
+
+
 def handle_mytrips(user_key):
     trips = list_trips(user_key)
 
@@ -922,16 +958,17 @@ def handle_mytrips(user_key):
         return (
             "📂 No trips yet / 尚未建立旅程\n\n"
             "Create one / 建立旅程:\n"
-            "NEWTRIP Japan Sakura 2027"
+            "NEWTRIP Japan Sakura 2027\n\n"
+            "Or use daily mode / 或使用日常模式:\n"
+            "USEDEFAULT"
         )
 
-    lines = []
+    active_lines = []
+    other_lines = []
 
     for index, trip in enumerate(trips, start=1):
         trip_name = trip.get("trip_name", "")
         is_active = str(trip.get("is_active", "")).lower() == "true"
-
-        marker = "✅" if is_active else "▫️"
 
         total, expenses = calculate_total_expenses(user_key, trip_name)
         budget = get_budget(user_key, trip_name)
@@ -945,16 +982,35 @@ def handle_mytrips(user_key):
             else:
                 budget_text = f"Spent NT${format_money(total)} / Remaining NT${format_money(remaining)}"
 
-        lines.append(
-            f"{index}. {marker} {trip_name}\n   {budget_text}"
+        trip_line = (
+            f"{index}. {trip_name}\n"
+            f"   {budget_text}"
         )
 
-    return (
-        "📂 My Trips / 我的旅程\n\n" +
-        "\n".join(lines) +
-        "\n\nSwitch or create trip / 切換或建立旅程:\n"
-        "NEWTRIP Japan Sakura 2027"
+        if is_active:
+            active_lines.append(trip_line)
+        else:
+            other_lines.append(trip_line)
+
+    message = "📂 My Trips / 我的旅程\n\n"
+
+    if active_lines:
+        message += "🟢 Active Trip\n目前旅程\n\n"
+        message += "\n".join(active_lines)
+
+    if other_lines:
+        message += "\n\n⚪ Other Trips\n其他旅程\n\n"
+        message += "\n".join(other_lines)
+
+    message += (
+        "\n\n────────────────\n\n"
+        "Create or switch trip / 建立或切換旅程:\n"
+        "NEWTRIP Japan Sakura 2027\n\n"
+        "Daily mode / 日常模式:\n"
+        "USEDEFAULT"
     )
+
+    return message
 
 
 def handle_spent(user_key, platform, text):
@@ -1128,6 +1184,8 @@ def handle_resettrip():
         "為避免誤刪歷史旅程資料，目前不支援清除旅程。\n\n"
         "Start or switch trip instead / 請改用建立或切換旅程:\n"
         "NEWTRIP Japan Sakura 2027\n\n"
+        "Use daily mode / 使用日常模式:\n"
+        "USEDEFAULT\n\n"
         "View trips / 查看旅程:\n"
         "MYTRIPS"
     )
@@ -1151,6 +1209,9 @@ def handle_text_message(user_key, platform, text):
 
     if is_newtrip_command(text):
         return handle_newtrip(user_key, text)
+
+    if is_usedefault_command(text):
+        return handle_usedefault(user_key)
 
     if is_mytrips_command(text):
         return handle_mytrips(user_key)
