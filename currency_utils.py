@@ -127,3 +127,17 @@ def convert_to_twd(amount, currency):
         currency,
         "TWD"
     )
+
+
+def parse_rate_command(text):
+    parts = text.strip().split()
+
+    if len(parts) < 2:
+        return None
+
+    target = parts[1].upper()
+
+    if target in SUPPORTED_CURRENCIES:
+        return target
+
+    return None
