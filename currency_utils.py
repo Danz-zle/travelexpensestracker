@@ -118,17 +118,6 @@ def parse_message(text):
     return item_name, price, currency
 
 
-def convert_to_twd(amount, currency):
-    if currency == "TWD":
-        return amount
-
-    return convert_currency(
-        amount,
-        currency,
-        "TWD"
-    )
-
-
 def parse_rate_command(text):
     parts = text.strip().split()
 
@@ -141,3 +130,14 @@ def parse_rate_command(text):
         return target
 
     return None
+
+
+def convert_to_twd(amount, currency):
+    if currency == "TWD":
+        return amount
+
+    return convert_currency(
+        amount,
+        currency,
+        "TWD"
+    )
