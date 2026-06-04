@@ -1,7 +1,6 @@
 import re
 
 from formatters import (
-    bucket_label,
     format_money,
     is_default_trip
 )
@@ -63,6 +62,14 @@ def is_cancel_command(text):
     ]
 
 
+def is_resettrip_command(text):
+    return text.lower().strip() in [
+        "resettrip",
+        "reset trip",
+        "重置旅程"
+    ]
+
+
 def parse_trip_names_for_delete(text):
     cleaned = remove_command(
         text,
@@ -73,7 +80,6 @@ def parse_trip_names_for_delete(text):
         return []
 
     lines = cleaned.splitlines()
-
     trip_names = []
 
     for line in lines:
